@@ -68,36 +68,6 @@ class EmulatorManager:
             emulators.append(emulator_status)
         return emulators
 
-    def get_running_emulators(self):
-        all_emulators = self.get_all_emulators()
-        emulators = []
-        for emulator in all_emulators:
-            if emulator.run_status == 1:
-                emulators.append(emulator)
-        return emulators
-
-    def get_index_name_map(self):
-        indices = self.get_running_indices()
-        if not indices:
-            raise RuntimeError("未检测到运行中的模拟器")
-
-        result = subprocess.run(
-            [self.adb_path, "devices"],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE
-        )
-        if result.returncode != 0:
-            raise RuntimeError("无法获取设备名")
-
-        lines = result.stdout.strip().splitlines()[1:]
-        names = [b.decode('utf-8').strip() for b in lines if b.decode('utf-8').strip()]
-        index_name_map = {}
-
-        for i in range(min(len(indices), len(names))):
-            parts = names[i].split()
-            if parts:
-                index_name_map[indices[i]] = parts[0]
-        return index_name_map
-
     def save_screenshot(self, image, index):
         os.makedirs("screenshots", exist_ok=True)
         path = os.path.join("screenshots", f"screenshot_index{index}.png")
