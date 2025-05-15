@@ -3,20 +3,23 @@ import subprocess
 import cv2
 import numpy as np
 
+import config
+
 
 class EmulatorExecutor:
-    def __init__(self, adb_path, emulator_name):
+    def __init__(self, adb_path, name, device_name):
         self.adb_path = adb_path
-        self.name = emulator_name
+        self.name = name
+        self.device_name = device_name
 
     def _run_adb(self, cmd_args):
-        full_cmd = [self.adb_path, "-s", self.name] + cmd_args
+        full_cmd = [self.adb_path, "-s", self.device_name] + cmd_args
         result = subprocess.run(full_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         return result.stdout.decode(errors="ignore")
 
     def screenshot(self):
         result = subprocess.run(
-            [self.adb_path, "-s", self.name, "exec-out", "screencap", "-p"],
+            [self.adb_path, "-s", self.device_name, "exec-out", "screencap", "-p"],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE
         )
         if result.returncode != 0:
@@ -32,9 +35,8 @@ class EmulatorExecutor:
     def click(self, x, y):
         self._run_adb(["shell", "input", "tap", str(x), str(y)])
 
-    def find_and_click_button(self, template_path="assets/button_template.png", threshold=0.8):
-        screen_path = self.screenshot()
-        img_rgb = cv2.imread(screen_path)
+    def find_and_click_button(self, template_path="buttons/button1.png", threshold=config.MATCH_THRESHOLD):
+        img_rgb = self.screenshot()
         template = cv2.imread(template_path)
 
         if img_rgb is None or template is None:

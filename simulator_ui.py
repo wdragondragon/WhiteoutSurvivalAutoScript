@@ -4,11 +4,9 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import QTimer, Qt
 
+import config
 from executor import EmulatorExecutor
-from simulator_manager import EmulatorManager
-
-ADB_PATH = r"C:\leidian\LDPlayer9\adb.exe"
-LDCONSOLE_PATH = r"C:\leidian\LDPlayer9\ldconsole.exe"
+from simulator_manager import EmulatorManager, EmulatorStatus
 
 
 class EmulatorSelector(QWidget):
@@ -16,7 +14,7 @@ class EmulatorSelector(QWidget):
         super().__init__()
         self.setWindowTitle("模拟器选择器")
         self.resize(600, 400)
-        self.manager = EmulatorManager(ADB_PATH, LDCONSOLE_PATH)
+        self.manager = EmulatorManager(config.ADB_PATH, config.LDCONSOLE_PATH)
 
         self.available_list = QListWidget()
         self.selected_list = QListWidget()
@@ -56,15 +54,19 @@ class EmulatorSelector(QWidget):
         self.timer.timeout.connect(self.refresh_emulators)
         self.timer.start(5000)
 
+        self.all_emulators_cache: dict[str, EmulatorStatus] = {}
+        self.running_emulators_name: set[str] = set()
         self.refresh_emulators()
 
     def refresh_emulators(self):
-        running = set(self.manager.get_running_emulators())
+        self.all_emulators_cache = {emulator.name: emulator for emulator in self.manager.get_all_emulators()}
+        running_emulators = [emulators for emulators in self.all_emulators_cache.values() if emulators.is_running()]
+        self.running_emulators_name = set([emulators.name for emulators in running_emulators])
         for i in reversed(range(self.selected_list.count())):
             text = self.selected_list.item(i).text()
-            if text not in running:
+            if text not in self.running_emulators_name:
                 self.selected_list.takeItem(i)
-        self._refresh_available_list(running)
+        self._refresh_available_list()
 
     def add_selected(self):
         for item in self.available_list.selectedItems():
@@ -86,18 +88,19 @@ class EmulatorSelector(QWidget):
 
         for name in selected:
             print(f"▶️ 开始处理模拟器：{name}")
-            executor = EmulatorExecutor(self.manager.adb_path, name)
+            emulator: EmulatorStatus = self.all_emulators_cache[name]
+            executor: EmulatorExecutor = EmulatorExecutor(adb_path=self.manager.adb_path,
+                                                          name=emulator.name,
+                                                          device_name=emulator.device_name)
             success = executor.find_and_click_button()
             if success:
                 print(f"✅ [{name}] 操作完成")
             else:
                 print(f"❌ [{name}] 未完成点击")
 
-    def _refresh_available_list(self, running=None):
-        if running is None:
-            running = set(self.manager.get_running_emulators())
+    def _refresh_available_list(self):
         selected = set(self._get_all_items(self.selected_list))
-        available = sorted(running - selected)
+        available = sorted(self.running_emulators_name - selected)
 
         self.available_list.clear()
         for emu in available:

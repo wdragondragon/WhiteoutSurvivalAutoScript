@@ -4,7 +4,19 @@ import subprocess
 
 import cv2
 
-from executor import EmulatorExecutor
+
+class EmulatorStatus:
+    def __init__(self):
+        self.index = 0
+        self.name = None
+        self.run_status = -1
+        self.height = 0
+        self.width = 0
+        self.dpi = 0
+        self.device_name = None
+
+    def is_running(self):
+        return self.run_status == 1
 
 
 class EmulatorManager:
@@ -13,7 +25,7 @@ class EmulatorManager:
         self.ldconsole_path = ldconsole_path
 
     def get_running_indices(self):
-        result = subprocess.run([self.ldconsole_path, "runningList2"], capture_output=True, text=True)
+        result = subprocess.run([self.ldconsole_path, "list2"], capture_output=True, text=True)
         if result.returncode != 0:
             return []
         lines = result.stdout.strip().splitlines()
@@ -24,15 +36,44 @@ class EmulatorManager:
                 indices.append(int(parts[0]))
         return indices
 
-    def get_running_emulators(self):
-        result = subprocess.run([self.ldconsole_path, "runningList2"], capture_output=True, text=True)
+    def get_all_emulators(self):
+        result = subprocess.run([self.ldconsole_path, "list2"], capture_output=True, text=True)
         if result.returncode != 0:
-            return []
+            raise Exception("获取设备列表出错")
+        devices_info_list = result.stdout.strip().splitlines()
+
+        running_devices_name = subprocess.run(
+            [self.adb_path, "devices"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
+        if running_devices_name.returncode != 0:
+            raise Exception("获取正在运行的设备出错")
+        running_devices_info_arr = [b.decode('utf-8').strip() for b in
+                                    running_devices_name.stdout.strip().splitlines()[1:] if b.decode('utf-8').strip()]
+        running_devices_name_arr = [devices_info.strip().split()[0] for devices_info in running_devices_info_arr]
         emulators = []
-        for line in result.stdout.strip().splitlines():
+        running_devices_index = 0
+        for line in devices_info_list:
             parts = [p.strip() for p in line.strip().split(",") if p.strip()]
-            if parts and parts[0].isdigit():
-                emulators.append(f"{parts[0]},{parts[1]}")
+            emulator_status = EmulatorStatus()
+            emulator_status.index = int(parts[0])
+            emulator_status.name = parts[1]
+            emulator_status.run_status = int(parts[4])
+            emulator_status.height = int(parts[7])
+            emulator_status.width = int(parts[8])
+            emulator_status.dpi = int(parts[9])
+            if emulator_status.is_running():
+                emulator_status.device_name = running_devices_name_arr[running_devices_index]
+                running_devices_index += 1
+            emulators.append(emulator_status)
+        return emulators
+
+    def get_running_emulators(self):
+        all_emulators = self.get_all_emulators()
+        emulators = []
+        for emulator in all_emulators:
+            if emulator.run_status == 1:
+                emulators.append(emulator)
         return emulators
 
     def get_index_name_map(self):
@@ -41,7 +82,7 @@ class EmulatorManager:
             raise RuntimeError("未检测到运行中的模拟器")
 
         result = subprocess.run(
-            [self.ldconsole_path, "adb", "--index", str(indices[0]), "--command", "\"devices\""],
+            [self.adb_path, "devices"],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE
         )
         if result.returncode != 0:
@@ -56,10 +97,6 @@ class EmulatorManager:
             if parts:
                 index_name_map[indices[i]] = parts[0]
         return index_name_map
-
-    def get_screenshot(self, device_name):
-        executor = EmulatorExecutor(adb_path=self.adb_path, emulator_name=device_name)
-        return executor.screenshot()
 
     def save_screenshot(self, image, index):
         os.makedirs("screenshots", exist_ok=True)

@@ -1,15 +1,9 @@
 # config.py
 
 # 修改为你的雷电模拟器路径
-LD_CONSOLE = r"C:\leidian\LDPlayer9\ldconsole.exe"
+ADB_PATH = r"E:\leidian\LDPlayer9\adb.exe"
 
-# 要操作的模拟器 index（0 表示第一个实例）
-SIMULATOR_INDEX_LIST = [0]
-
-# 要识别的按钮图像路径（可添加多个）
-BUTTON_IMAGES = [
-    "buttons/button1.png",
-]
+LDCONSOLE_PATH = r"E:\leidian\LDPlayer9\ldconsole.exe"
 
 # 每次循环的间隔（秒）
 LOOP_INTERVAL = 3
