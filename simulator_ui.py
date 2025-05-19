@@ -1,6 +1,7 @@
+# simulator_ui.py
 from PyQt5.QtWidgets import (
     QWidget, QListWidget, QPushButton, QHBoxLayout, QVBoxLayout,
-    QListWidgetItem, QLabel
+    QListWidgetItem, QLabel, QLineEdit, QFormLayout
 )
 from PyQt5.QtCore import QTimer, Qt
 from PyQt5.QtGui import QIcon, QPixmap, QPainter, QColor
@@ -20,6 +21,43 @@ def create_status_icon(color, size):
     painter.drawEllipse(0, 0, size, size)
     painter.end()
     return QIcon(pixmap)
+
+
+class TaskParamEditor(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.param_defs = []
+        self.param_values = {}
+        self.edits = {}
+
+        self.form_layout = QFormLayout()
+        self.setLayout(self.form_layout)
+
+    def load_params(self, param_defs, param_values):
+        while self.form_layout.count():
+            child = self.form_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+
+        self.param_defs = param_defs
+        self.param_values = param_values or {}
+        self.edits = {}
+
+        for p in param_defs:
+            label = QLabel(f"{p['desc']} ({p['name']})")
+            edit = QLineEdit()
+            val = str(self.param_values.get(p['name'], p.get("default", "")))
+            edit.setText(val)
+            edit.textChanged.connect(self._on_change)
+            self.form_layout.addRow(label, edit)
+            self.edits[p['name']] = edit
+
+    def _on_change(self):
+        for name, edit in self.edits.items():
+            self.param_values[name] = edit.text()
+
+    def get_params(self):
+        return self.param_values
 
 
 class EmulatorSelector(QWidget):
