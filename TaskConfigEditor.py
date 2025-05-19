@@ -242,10 +242,10 @@ class TaskConfigEditor(QWidget):
 if __name__ == '__main__':
     import sys
     from PyQt5.QtWidgets import QApplication
-    from task_executor import EmulatorExecutor
+    from task_executor import TaskExecutor
 
     app = QApplication(sys.argv)
-    executor = EmulatorExecutor("模拟器1")
+    executor = TaskExecutor("模拟器1")
     editor = TaskConfigEditor(executor)
     editor.resize(900, 500)
     editor.show()

@@ -1,6 +1,7 @@
 # executor.py
 TASK_REGISTRY = {}
 
+
 def register_task(name, param_defs=None):
     def decorator(func):
         TASK_REGISTRY[name] = {
@@ -12,7 +13,7 @@ def register_task(name, param_defs=None):
     return decorator
 
 
-class EmulatorExecutor:
+class TaskExecutor:
     def __init__(self, emulator_name):
         self.emulator_name = emulator_name
 
@@ -62,7 +63,7 @@ def task_wait(executor, params):
 
 
 if __name__ == '__main__':
-    emulatorExecutor: EmulatorExecutor = EmulatorExecutor('123')
+    emulatorExecutor: TaskExecutor = TaskExecutor('123')
     emulatorExecutor.execute_task_config({
         "tasks": [
             {
