@@ -3,7 +3,7 @@ import subprocess
 import cv2
 import numpy as np
 
-import config
+import config_manager
 
 
 class EmulatorExecutor:
@@ -35,7 +35,7 @@ class EmulatorExecutor:
     def click(self, x, y):
         self._run_adb(["shell", "input", "tap", str(x), str(y)])
 
-    def find_and_click_button(self, template_path="buttons/button1.png", threshold=config.MATCH_THRESHOLD):
+    def find_and_click_button(self, template_path="buttons/button1.png", threshold=config_manager.MATCH_THRESHOLD):
         img_rgb = self.screenshot()
         template = cv2.imread(template_path)
 

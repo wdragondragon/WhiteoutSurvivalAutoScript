@@ -1,123 +1,160 @@
-# simulator_ui.py
 from PyQt5.QtWidgets import (
-    QWidget, QListWidget, QPushButton, QHBoxLayout, QVBoxLayout, QListWidgetItem, QLabel
+    QWidget, QListWidget, QPushButton, QHBoxLayout, QVBoxLayout,
+    QListWidgetItem, QLabel
 )
 from PyQt5.QtCore import QTimer, Qt
+from PyQt5.QtGui import QIcon, QPixmap, QPainter, QColor
 
-import config
+import config_manager
+from simulator_manager import EmulatorManager
 from executor import EmulatorExecutor
-from simulator_manager import EmulatorManager, EmulatorStatus
+
+
+def create_status_icon(color, size):
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing, True)
+    painter.setBrush(QColor(color))
+    painter.setPen(Qt.NoPen)
+    painter.drawEllipse(0, 0, size, size)
+    painter.end()
+    return QIcon(pixmap)
 
 
 class EmulatorSelector(QWidget):
-    def __init__(self):
+    def __init__(self, config_mgr):
         super().__init__()
         self.setWindowTitle("模拟器选择器")
         self.resize(600, 400)
-        self.manager = EmulatorManager(config.ADB_PATH, config.LDCONSOLE_PATH)
 
-        self.available_list = QListWidget()
-        self.selected_list = QListWidget()
+        self.config_mgr = config_mgr
 
-        self.add_button = QPushButton("→")
-        self.remove_button = QPushButton("←")
+        self.manager = EmulatorManager(config_mgr.get("adb_path", config_manager.ADB_PATH),
+                                       config_mgr.get("ldconsole_path", config_manager.LDCONSOLE_PATH))
+        self.status_icon_size = self.config_mgr.get("status_icon_size", 12)
+        self.running_icon = create_status_icon("green", self.status_icon_size)
+        self.stopped_icon = create_status_icon("gray", self.status_icon_size)
+
+        self.selected_emulators = set(self.config_mgr.get_selected_emulators())
+
+        # UI 部件
+        self.list_widget = QListWidget()
+        self.list_widget.setSelectionMode(QListWidget.MultiSelection)
+
+        self.select_all_button = QPushButton("全选")
+        self.deselect_all_button = QPushButton("全不选")
         self.start_button = QPushButton("开始执行")
+        self.status_label = QLabel("状态：空闲")
 
-        button_layout = QVBoxLayout()
-        button_layout.addWidget(self.add_button)
-        button_layout.addWidget(self.remove_button)
-        button_layout.addStretch()
+        # 布局
+        btn_layout = QHBoxLayout()
+        btn_layout.addWidget(self.select_all_button)
+        btn_layout.addWidget(self.deselect_all_button)
+        btn_layout.addStretch()
+        btn_layout.addWidget(self.start_button)
 
-        main_layout = QHBoxLayout()
-        main_layout.addWidget(QLabel("正在运行的模拟器"))
-        main_layout.addWidget(QLabel("已选择的模拟器"))
-        layout = QHBoxLayout()
-        layout.addWidget(self.available_list)
-        layout.addLayout(button_layout)
-        layout.addWidget(self.selected_list)
+        main_layout = QVBoxLayout()
+        main_layout.addWidget(self.list_widget)
+        main_layout.addLayout(btn_layout)
+        main_layout.addWidget(self.status_label)
 
-        vlayout = QVBoxLayout()
-        vlayout.addLayout(main_layout)
-        vlayout.addLayout(layout)
-        vlayout.addWidget(self.start_button)
+        self.setLayout(main_layout)
 
-        self.setLayout(vlayout)
-
-        self.add_button.clicked.connect(self.add_selected)
-        self.remove_button.clicked.connect(self.remove_selected)
+        # 连接信号槽
+        self.select_all_button.clicked.connect(self.select_all)
+        self.deselect_all_button.clicked.connect(self.deselect_all)
         self.start_button.clicked.connect(self.start_execution)
+        self.list_widget.itemChanged.connect(self.handle_item_changed)
 
-        self.available_list.itemDoubleClicked.connect(self._on_add_double_click)
-        self.selected_list.itemDoubleClicked.connect(self._on_remove_double_click)
-
+        # 定时刷新模拟器状态
         self.timer = QTimer()
         self.timer.timeout.connect(self.refresh_emulators)
-        self.timer.start(5000)
+        self.timer.start(5000)  # 5秒刷新一次
 
-        self.all_emulators_cache: dict[str, EmulatorStatus] = {}
-        self.running_emulators_name: set[str] = set()
         self.refresh_emulators()
 
     def refresh_emulators(self):
-        self.all_emulators_cache = {emulator.name: emulator for emulator in self.manager.get_all_emulators()}
-        running_emulators = [emulators for emulators in self.all_emulators_cache.values() if emulators.is_running()]
-        self.running_emulators_name = set([emulators.name for emulators in running_emulators])
-        for i in reversed(range(self.selected_list.count())):
-            text = self.selected_list.item(i).text()
-            if text not in self.running_emulators_name:
-                self.selected_list.takeItem(i)
-        self._refresh_available_list()
+        emulators = self.manager.get_all_emulators()
 
-    def add_selected(self):
-        for item in self.available_list.selectedItems():
-            text = item.text()
-            if not self.selected_list.findItems(text, Qt.MatchExactly):
-                self.selected_list.addItem(text)
-        self._refresh_available_list()
+        # 保留旧选中状态
+        old_selected = self.selected_emulators.copy()
 
-    def remove_selected(self):
-        for item in self.selected_list.selectedItems():
-            self.selected_list.takeItem(self.selected_list.row(item))
-        self._refresh_available_list()
+        self.list_widget.blockSignals(True)
+        self.list_widget.clear()
+
+        for emu in emulators:
+            item = QListWidgetItem(emu.name)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            # 之前选中的恢复勾选
+            if emu.name in old_selected:
+                item.setCheckState(Qt.Checked)
+            else:
+                item.setCheckState(Qt.Unchecked)
+
+            # 状态图标（左侧）
+            icon = self.running_icon if emu.is_running() else self.stopped_icon
+            item.setIcon(icon)
+
+            self.list_widget.addItem(item)
+
+        self.list_widget.blockSignals(False)
+        # 更新当前选中集合
+        self.selected_emulators = {item.text() for item in self.iter_checked_items()}
+
+    def iter_checked_items(self):
+        for i in range(self.list_widget.count()):
+            item = self.list_widget.item(i)
+            if item.checkState() == Qt.Checked:
+                yield item
+
+    def select_all(self):
+        self.list_widget.blockSignals(True)
+        for i in range(self.list_widget.count()):
+            self.list_widget.item(i).setCheckState(Qt.Checked)
+        self.list_widget.blockSignals(False)
+        self.selected_emulators = {item.text() for item in self.iter_checked_items()}
+
+    def deselect_all(self):
+        self.list_widget.blockSignals(True)
+        for i in range(self.list_widget.count()):
+            self.list_widget.item(i).setCheckState(Qt.Unchecked)
+        self.list_widget.blockSignals(False)
+        self.selected_emulators.clear()
+
+    def handle_item_changed(self, item):
+        if item.checkState() == Qt.Checked:
+            self.selected_emulators.add(item.text())
+        else:
+            self.selected_emulators.discard(item.text())
 
     def start_execution(self):
-        selected = [self.selected_list.item(i).text() for i in range(self.selected_list.count())]
-        if not selected:
-            print("⚠️ 请先选择要执行的模拟器")
+        if not self.selected_emulators:
+            self.status_label.setText("⚠️ 请先选择要执行的模拟器")
             return
 
-        for name in selected:
-            print(f"▶️ 开始处理模拟器：{name}")
-            emulator: EmulatorStatus = self.all_emulators_cache[name]
-            executor: EmulatorExecutor = EmulatorExecutor(adb_path=self.manager.adb_path,
-                                                          name=emulator.name,
-                                                          device_name=emulator.device_name)
+        self.status_label.setText("▶️ 任务进行中...")
+
+        for name in self.selected_emulators:
+            emulator = next((e for e in self.manager.get_all_emulators() if e.name == name), None)
+            if not emulator:
+                continue
+
+            if not emulator.is_running():
+                print(f"{emulator.name}未运行，跳过执行")
+                continue
+
+            executor = EmulatorExecutor(adb_path=self.manager.adb_path,
+                                        name=emulator.name,
+                                        device_name=emulator.device_name)
             success = executor.find_and_click_button()
+
             if success:
                 print(f"✅ [{name}] 操作完成")
             else:
                 print(f"❌ [{name}] 未完成点击")
 
-    def _refresh_available_list(self):
-        selected = set(self._get_all_items(self.selected_list))
-        available = sorted(self.running_emulators_name - selected)
+        self.status_label.setText("✔️ 任务完成")
 
-        self.available_list.clear()
-        for emu in available:
-            self.available_list.addItem(QListWidgetItem(emu))
-
-    def _get_all_items(self, list_widget):
-        return [list_widget.item(i).text() for i in range(list_widget.count())]
-
-    def _on_add_double_click(self, item):
-        text = item.text()
-        if not self._list_has_item(self.selected_list, text):
-            self.selected_list.addItem(text)
-            self._refresh_available_list()
-
-    def _on_remove_double_click(self, item):
-        self.selected_list.takeItem(self.selected_list.row(item))
-        self._refresh_available_list()
-
-    def _list_has_item(self, list_widget, text):
-        return any(list_widget.item(i).text() == text for i in range(list_widget.count()))
+    def get_selected_emulators(self):
+        return list(self.selected_emulators)

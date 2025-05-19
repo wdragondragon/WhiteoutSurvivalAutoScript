@@ -62,7 +62,7 @@ class EmulatorManager:
             emulator_status.height = int(parts[7])
             emulator_status.width = int(parts[8])
             emulator_status.dpi = int(parts[9])
-            if emulator_status.is_running():
+            if emulator_status.is_running() and running_devices_index < len(running_devices_name_arr):
                 emulator_status.device_name = running_devices_name_arr[running_devices_index]
                 running_devices_index += 1
             emulators.append(emulator_status)
