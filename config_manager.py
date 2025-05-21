@@ -1,5 +1,6 @@
 # config_manager.py
 import json
+import os
 import threading
 
 # 修改为你的雷电模拟器路径
@@ -64,3 +65,39 @@ class ConfigManager:
 
     def set_emulator_bindings(self, bindings):
         self.config["emulator_bindings"] = bindings
+
+
+class TaskConfigManager:
+    def __init__(self, config_path="configs/"):
+        self.config_path = config_path
+        os.makedirs("configs", exist_ok=True)
+
+    def save_config_to_file(self, config_name, task_config):
+        data = {
+            "name": config_name,
+            "tasks": task_config
+        }
+        path = os.path.join(self.config_path, f"{config_name}.json")
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        print(f"配置已保存至 {path}")
+
+    def load_config_from_file(self, config_name):
+        path = os.path.join(self.config_path, f"{config_name}.json")
+        if not os.path.exists(path):
+            return []
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return data
+        except Exception as e:
+            print(f"加载出错: {str(e)}")
+
+    def get_config_name_list(self):
+        config_name_list = []
+        if not os.path.exists(self.config_path):
+            return
+        for fname in os.listdir(self.config_path):
+            if fname.endswith(".json"):
+                config_name_list.append(fname[:-5])
+        return config_name_list

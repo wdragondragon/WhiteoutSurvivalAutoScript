@@ -1,23 +1,19 @@
 from PyQt5.QtWidgets import (
     QWidget, QListWidget, QPushButton, QVBoxLayout, QHBoxLayout,
-    QFormLayout, QLineEdit, QLabel, QSpinBox, QDoubleSpinBox, QMessageBox, QComboBox
+    QFormLayout, QLineEdit, QLabel, QSpinBox, QDoubleSpinBox, QMessageBox
 )
 
 from task_executor import TASK_REGISTRY
-import json
-import os
 
 
 class TaskConfigEditor(QWidget):
-    def __init__(self, executor=None):
+    def __init__(self):
         super().__init__()
-        self.executor = executor
         self.task_param_widgets = []
         self.task_config = []
         self.setWindowTitle("任务配置编辑器")
         self.init_ui()
         self.refresh_task_list_ui()
-        self.refresh_config_file_list()
 
     def init_ui(self):
         main_layout = QHBoxLayout()
@@ -62,33 +58,12 @@ class TaskConfigEditor(QWidget):
         right_layout.addWidget(QLabel("任务参数"))
         right_layout.addWidget(self.param_container)
 
-        self.save_button = QPushButton("保存配置")
-        self.save_button.clicked.connect(self.save_config_to_file)
-
-        # 底部：配置命名与执行
-        self.config_name_combo = QComboBox()
-        self.config_name_combo.setEditable(True)
-        self.config_name_combo.setInsertPolicy(QComboBox.NoInsert)
-        self.config_name_combo.activated[str].connect(self.load_config_from_file)
-        self.execute_button = QPushButton("执行任务配置")
-        self.execute_button.clicked.connect(self.execute_config)
-
-        bottom_layout = QHBoxLayout()
-        bottom_layout.addWidget(QLabel("配置名:"))
-        bottom_layout.addWidget(self.config_name_combo)
-        bottom_layout.addWidget(self.save_button)
-        bottom_layout.addWidget(self.execute_button)
-
         # 组合所有布局
         main_layout.addLayout(left_layout, 1)
         main_layout.addLayout(mid_layout, 1)
         main_layout.addLayout(right_layout, 2)
 
-        root_layout = QVBoxLayout()
-        root_layout.addLayout(main_layout)
-        root_layout.addLayout(bottom_layout)
-
-        self.setLayout(root_layout)
+        self.setLayout(main_layout)
 
     def add_task_to_config(self):
         selected = self.task_list.currentItem()
@@ -109,15 +84,6 @@ class TaskConfigEditor(QWidget):
         self.config_list.clear()
         for idx, task in enumerate(self.task_config):
             self.config_list.addItem(f"{idx + 1}. {task['name']}")
-
-    def refresh_config_file_list(self):
-        """刷新配置文件名下拉框"""
-        self.config_name_combo.clear()
-        if not os.path.exists("configs"):
-            return
-        for fname in os.listdir("configs"):
-            if fname.endswith(".json"):
-                self.config_name_combo.addItem(fname[:-5])
 
     def update_param_editor(self, index):
         for i in reversed(range(self.param_layout.count())):
@@ -189,49 +155,13 @@ class TaskConfigEditor(QWidget):
             self.task_config.pop(row)
             self.refresh_task_list_ui()
 
-    def execute_config(self):
+    def get_task_config(self):
         self.save_params()
-        if not self.executor:
-            QMessageBox.warning(self, "执行失败", "未绑定 EmulatorExecutor")
-            return
-        name = self.config_name_combo.currentText().strip() or "未命名配置"
-        print(f"开始执行任务配置: {name}")
-        self.executor.execute_task_config({"tasks": self.task_config})
+        return self.task_config
 
-    def save_config_to_file(self):
-        self.save_params()
-        config_name = self.config_name_combo.currentText().strip()
-        if not config_name:
-            QMessageBox.warning(self, "保存失败", "请填写配置名")
-            return
-
-        data = {
-            "name": config_name,
-            "tasks": self.task_config
-        }
-
-        os.makedirs("configs", exist_ok=True)
-        path = os.path.join("configs", f"{config_name}.json")
+    def load_config_editor(self, data):
         try:
-            with open(path, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
-            QMessageBox.information(self, "保存成功", f"配置已保存至 {path}")
-            # 保存成功后刷新下拉框，确保新配置显示
-            self.refresh_config_file_list()
-            self.config_name_combo.setCurrentText(config_name)
-        except Exception as e:
-            QMessageBox.critical(self, "保存失败", f"保存出错: {str(e)}")
-
-    def load_config_from_file(self, config_name):
-        path = os.path.join("configs", f"{config_name}.json")
-        if not os.path.exists(path):
-            QMessageBox.warning(self, "配置不存在", f"{path} 不存在")
-            return
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
             self.task_config = data.get("tasks", [])
-            self.config_name_combo.setCurrentText(data.get("name", config_name))
             self.refresh_task_list_ui()
             self.config_list.setCurrentRow(0)
         except Exception as e:
@@ -246,7 +176,7 @@ if __name__ == '__main__':
 
     app = QApplication(sys.argv)
     executor = TaskExecutor("模拟器1")
-    editor = TaskConfigEditor(executor)
+    editor = TaskConfigEditor()
     editor.resize(900, 500)
     editor.show()
     sys.exit(app.exec_())

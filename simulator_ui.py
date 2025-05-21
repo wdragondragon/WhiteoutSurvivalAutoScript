@@ -1,14 +1,15 @@
 # simulator_ui.py
-from PyQt5.QtWidgets import (
-    QWidget, QListWidget, QPushButton, QHBoxLayout, QVBoxLayout,
-    QListWidgetItem, QLabel, QLineEdit, QFormLayout
-)
 from PyQt5.QtCore import QTimer, Qt
 from PyQt5.QtGui import QIcon, QPixmap, QPainter, QColor
+from PyQt5.QtWidgets import (
+    QWidget, QListWidget, QPushButton, QHBoxLayout, QVBoxLayout,
+    QListWidgetItem, QLabel, QComboBox
+)
 
-import config_manager
+from TaskConfigEditor import TaskConfigEditor
+from config_manager import TaskConfigManager, ADB_PATH, LDCONSOLE_PATH
 from simulator_manager import EmulatorManager
-from executor import EmulatorExecutor
+from task_executor import TaskExecutor
 
 
 def create_status_icon(color, size):
@@ -30,9 +31,10 @@ class EmulatorSelector(QWidget):
         self.resize(600, 400)
 
         self.config_mgr = config_mgr
+        self.task_config_manager: TaskConfigManager = TaskConfigManager()
 
-        self.manager = EmulatorManager(config_mgr.get("adb_path", config_manager.ADB_PATH),
-                                       config_mgr.get("ldconsole_path", config_manager.LDCONSOLE_PATH))
+        self.manager = EmulatorManager(config_mgr.get("adb_path", ADB_PATH),
+                                       config_mgr.get("ldconsole_path", LDCONSOLE_PATH))
         self.status_icon_size = self.config_mgr.get("status_icon_size", 12)
         self.running_icon = create_status_icon("green", self.status_icon_size)
         self.stopped_icon = create_status_icon("gray", self.status_icon_size)
@@ -43,21 +45,37 @@ class EmulatorSelector(QWidget):
         self.list_widget = QListWidget()
         self.list_widget.setSelectionMode(QListWidget.MultiSelection)
 
+        self.task_config_editor = TaskConfigEditor()
+
+        self.main_layout = QHBoxLayout()
+        self.main_layout.addWidget(self.list_widget)
+        self.main_layout.addWidget(self.task_config_editor)
+
         self.select_all_button = QPushButton("全选")
         self.deselect_all_button = QPushButton("全不选")
         self.start_button = QPushButton("开始执行")
         self.status_label = QLabel("状态：空闲")
 
+        # 底部：配置命名与执行
+        self.config_name_combo = QComboBox()
+        self.config_name_combo.setEditable(True)
+        self.config_name_combo.setInsertPolicy(QComboBox.NoInsert)
+        self.config_name_combo.activated[str].connect(self.load_config_from_file)
+
+        self.save_button = QPushButton("保存配置")
+        self.save_button.clicked.connect(self.save_config_to_file)
         # 布局
         btn_layout = QHBoxLayout()
         btn_layout.addWidget(self.select_all_button)
         btn_layout.addWidget(self.deselect_all_button)
         btn_layout.addStretch()
         btn_layout.addWidget(self.start_button)
+        btn_layout.addWidget(self.save_button)
 
         main_layout = QVBoxLayout()
-        main_layout.addWidget(self.list_widget)
+        main_layout.addLayout(self.main_layout)
         main_layout.addLayout(btn_layout)
+        main_layout.addWidget(self.config_name_combo)
         main_layout.addWidget(self.status_label)
 
         self.setLayout(main_layout)
@@ -74,6 +92,24 @@ class EmulatorSelector(QWidget):
         self.timer.start(5000)  # 5秒刷新一次
 
         self.refresh_emulators()
+        self.refresh_config_file_list()
+        self.load_config_from_file(self.config_name_combo.currentText())
+
+    def load_config_from_file(self, config_name):
+        print(f"加载配置{config_name}")
+        task_config = self.task_config_manager.load_config_from_file(config_name)
+        self.task_config_editor.load_config_editor(task_config)
+
+    def refresh_config_file_list(self):
+        self.config_name_combo.clear()
+        config_name_list = self.task_config_manager.get_config_name_list()
+        for config_name in config_name_list:
+            self.config_name_combo.addItem(config_name)
+
+    def save_config_to_file(self):
+        task_config = self.task_config_editor.get_task_config()
+        config_name = self.config_name_combo.currentText().strip()
+        self.task_config_manager.save_config_to_file(config_name, task_config)
 
     def refresh_emulators(self):
         emulators = self.manager.get_all_emulators()
@@ -144,18 +180,10 @@ class EmulatorSelector(QWidget):
             if not emulator.is_running():
                 print(f"{emulator.name}未运行，跳过执行")
                 continue
-
-            executor = EmulatorExecutor(adb_path=self.manager.adb_path,
-                                        name=emulator.name,
-                                        device_name=emulator.device_name)
-            success = executor.find_and_click_button()
-            success = executor.find_and_click_button(template_path="buttons/button2.png")
-
-            if success:
-                print(f"✅ [{name}] 操作完成")
-            else:
-                print(f"❌ [{name}] 未完成点击")
-
+            task_executor: TaskExecutor = TaskExecutor(emulator.name)
+            task_config_name = self.config_name_combo.currentText().strip()
+            task_config = self.task_config_manager.load_config_from_file(task_config_name)
+            task_executor.execute_task_config(task_config)
         self.status_label.setText("✔️ 任务完成")
 
     def get_selected_emulators(self):
