@@ -1,4 +1,4 @@
-# executor.py
+# emulator_executor.py
 import subprocess
 
 import cv2
