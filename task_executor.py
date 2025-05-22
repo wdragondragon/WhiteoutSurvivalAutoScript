@@ -1,4 +1,6 @@
 # emulator_executor.py
+from emulator_executor import EmulatorExecutor
+
 TASK_REGISTRY = {}
 
 
@@ -14,8 +16,12 @@ def register_task(name, param_defs=None):
 
 
 class TaskExecutor:
-    def __init__(self, emulator_name):
-        self.emulator_name = emulator_name
+    def __init__(self, emulator_name=None, emulator_executor: EmulatorExecutor = None):
+        if emulator_name is None:
+            self.emulator_name = emulator_executor.name
+        else:
+            self.emulator_name = emulator_name
+        self.emulator_executor = emulator_executor
 
     def execute_task(self, task_name, params):
         task_info = TASK_REGISTRY.get(task_name)
@@ -43,10 +49,11 @@ class TaskExecutor:
     {"name": "template_path", "type": "str", "default": "buttons/button1.png", "desc": "按钮模板路径"},
     {"name": "threshold", "type": "float", "default": 0.85, "desc": "匹配阈值(0-1)"}
 ])
-def task_click_button(executor, params):
+def task_click_button(executor: TaskExecutor, params):
     # 模拟执行点击操作
     template = params.get("template_path")
     threshold = float(params.get("threshold", 0.85))
+    executor.emulator_executor.find_and_click_button(template, threshold)
     print(f"{executor.emulator_name} 执行点击，模板: {template}，阈值: {threshold}")
     return True
 
@@ -54,7 +61,7 @@ def task_click_button(executor, params):
 @register_task("等待", param_defs=[
     {"name": "seconds", "type": "int", "default": 1, "desc": "等待秒数"}
 ])
-def task_wait(executor, params):
+def task_wait(executor: TaskExecutor, params):
     seconds = int(params.get("seconds", 1))
     print(f"{executor.emulator_name} 等待 {seconds} 秒")
     import time

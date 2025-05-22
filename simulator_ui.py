@@ -6,8 +6,10 @@ from PyQt5.QtWidgets import (
     QListWidgetItem, QLabel, QComboBox
 )
 
+import config_manager
 from TaskConfigEditor import TaskConfigEditor
 from config_manager import TaskConfigManager, ADB_PATH, LDCONSOLE_PATH
+from emulator_executor import EmulatorExecutor
 from simulator_manager import EmulatorManager
 from task_executor import TaskExecutor
 
@@ -180,7 +182,10 @@ class EmulatorSelector(QWidget):
             if not emulator.is_running():
                 print(f"{emulator.name}未运行，跳过执行")
                 continue
-            task_executor: TaskExecutor = TaskExecutor(emulator.name)
+            emulator_executor: EmulatorExecutor = EmulatorExecutor(config_manager.ADB_PATH,
+                                                                   emulator.name,
+                                                                   emulator.device_name)
+            task_executor: TaskExecutor = TaskExecutor(emulator_executor=emulator_executor)
             task_config_name = self.config_name_combo.currentText().strip()
             task_config = self.task_config_manager.load_config_from_file(task_config_name)
             task_executor.execute_task_config(task_config)

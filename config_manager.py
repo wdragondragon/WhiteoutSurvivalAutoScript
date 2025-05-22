@@ -46,20 +46,6 @@ class ConfigManager:
     def set_selected_emulators(self, emulators_list):
         self.config["selected_emulators"] = emulators_list
 
-    def get_task_configs(self):
-        return self.config.get("task_configs", [
-            {
-                "name": "示例任务配置1",
-                "tasks": [
-                    {"name": "点击按钮", "params": {"template_path": "buttons/start.png", "threshold": 0.9}},
-                    {"name": "等待", "params": {"seconds": 2}}
-                ]
-            }
-        ])
-
-    def set_task_configs(self, task_configs):
-        self.config["task_configs"] = task_configs
-
     def get_emulator_bindings(self):
         return self.config.get("emulator_bindings", {"模拟器1": "示例任务配置1"})
 
