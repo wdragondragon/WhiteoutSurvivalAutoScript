@@ -1,5 +1,5 @@
 # simulator_ui.py
-from PyQt5.QtCore import QTimer, Qt, pyqtSignal
+from PyQt5.QtCore import QTimer, Qt, pyqtSignal, QThread
 from PyQt5.QtGui import QIcon, QPixmap, QPainter, QColor
 from PyQt5.QtWidgets import (
     QWidget, QListWidget, QPushButton, QHBoxLayout, QVBoxLayout,
@@ -28,6 +28,37 @@ def create_status_icon(color, size):
     return QIcon(pixmap)
 
 
+class TaskThread(QThread):
+    log_signal = pyqtSignal(str)
+    finished_signal = pyqtSignal(str)
+
+    def __init__(self, emulator, task_config, adb_path):
+        super().__init__()
+        self.emulator = emulator
+        self.task_config = task_config
+        self.adb_path = adb_path
+        self._is_running = True
+
+    def run(self):
+        if not self.emulator.is_running():
+            self.log_signal.emit(f"⚠️ 模拟器 {self.emulator.name} 未运行，跳过")
+            self.finished_signal.emit(self.emulator.name)
+            return
+
+        executor = EmulatorExecutor(config_manager.ADB_PATH, self.emulator.name, self.emulator.device_name)
+        task_executor = TaskExecutor(emulator_executor=executor)
+
+        while self._is_running:
+            task_executor.execute_task_config(self.task_config)
+            self.log_signal.emit(f"✅ {self.emulator.name} 执行完毕，3秒后再次执行")
+            self.sleep(3)
+
+        self.finished_signal.emit(self.emulator.name)
+
+    def stop(self):
+        self._is_running = False
+
+
 class EmulatorSelector(QWidget):
     log_pyqt_signal = pyqtSignal(str)
 
@@ -36,7 +67,8 @@ class EmulatorSelector(QWidget):
         self.setWindowTitle("模拟器选择器")
         self.resize(1200, 400)
         log_util.log = Log(self.log_pyqt_signal)
-
+        self.threads = {}
+        self.is_running = False
         self.config_mgr = config_mgr
         self.task_config_manager: TaskConfigManager = TaskConfigManager()
 
@@ -103,7 +135,7 @@ class EmulatorSelector(QWidget):
         # 连接信号槽
         self.select_all_button.clicked.connect(self.select_all)
         self.deselect_all_button.clicked.connect(self.deselect_all)
-        self.start_button.clicked.connect(self.start_execution)
+        self.start_button.clicked.connect(self.toggle_execution)
         self.list_widget.itemChanged.connect(self.handle_item_changed)
 
         # 定时刷新模拟器状态
@@ -191,7 +223,6 @@ class EmulatorSelector(QWidget):
             return
 
         self.status_label.setText("▶️ 任务进行中...")
-
         for name in self.selected_emulators:
             emulator = next((e for e in self.manager.get_all_emulators() if e.name == name), None)
             if not emulator:
@@ -208,6 +239,51 @@ class EmulatorSelector(QWidget):
             task_config = self.task_config_manager.load_config_from_file(task_config_name)
             task_executor.execute_task_config(task_config)
         self.status_label.setText("✔️ 任务完成")
+
+    def toggle_execution(self):
+        if not self.is_running:
+            if not self.selected_emulators:
+                self.status_label.setText("⚠️ 请先选择要执行的模拟器")
+                return
+            self.start_tasks()
+        else:
+            self.stop_tasks()
+
+    def start_tasks(self):
+        self.is_running = True
+        self.start_button.setText("停止执行")
+        self.status_label.setText("▶️ 正在执行任务...")
+
+        task_config_name = self.config_name_combo.currentText().strip()
+        task_config = self.task_config_manager.load_config_from_file(task_config_name)
+
+        for name in self.selected_emulators:
+            emulator = next((e for e in self.manager.get_all_emulators() if e.name == name), None)
+            if not emulator:
+                continue
+            thread = TaskThread(emulator, task_config, config_manager.ADB_PATH)
+            thread.log_signal.connect(log_util.log.print)
+            thread.finished_signal.connect(self.thread_finished)
+            self.threads[name] = thread
+            thread.start()
+
+    def stop_tasks(self):
+        self.status_label.setText("⏹️ 正在停止任务...")
+        self.start_button.setText("开始执行")
+        self.is_running = False
+
+        for name, thread in self.threads.items():
+            thread.stop()
+        self.threads.clear()
+
+    def thread_finished(self, name):
+        log_util.log.print(f"🛑 {name} 线程已停止")
+        self.threads.pop(name, None)
+
+        if not self.threads:
+            self.status_label.setText("✅ 所有任务线程已完成")
+            self.start_button.setText("开始执行")
+            self.is_running = False
 
     def get_selected_emulators(self):
         return list(self.selected_emulators)
