@@ -25,7 +25,8 @@ class EmulatorManager:
         self.ldconsole_path = ldconsole_path
 
     def get_running_indices(self):
-        result = subprocess.run([self.ldconsole_path, "list2"], capture_output=True, text=True)
+        result = subprocess.run([self.ldconsole_path, "list2"], capture_output=True, text=True,
+                                creationflags=subprocess.CREATE_NO_WINDOW)
         if result.returncode != 0:
             return []
         lines = result.stdout.strip().splitlines()
@@ -37,14 +38,16 @@ class EmulatorManager:
         return indices
 
     def get_all_emulators(self):
-        result = subprocess.run([self.ldconsole_path, "list2"], capture_output=True, text=True)
+        result = subprocess.run([self.ldconsole_path, "list2"], capture_output=True, text=True,
+                                creationflags=subprocess.CREATE_NO_WINDOW)
         if result.returncode != 0:
             raise Exception("获取设备列表出错")
         devices_info_list = result.stdout.strip().splitlines()
 
         running_devices_name = subprocess.run(
             [self.adb_path, "devices"],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            creationflags=subprocess.CREATE_NO_WINDOW
         )
         if running_devices_name.returncode != 0:
             raise Exception("获取正在运行的设备出错")

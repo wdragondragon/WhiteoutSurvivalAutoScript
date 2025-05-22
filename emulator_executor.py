@@ -6,7 +6,6 @@ import numpy as np
 
 import config_manager
 import log_util
-from log_util import Log
 
 
 class EmulatorExecutor:
@@ -17,13 +16,15 @@ class EmulatorExecutor:
 
     def _run_adb(self, cmd_args):
         full_cmd = [self.adb_path, "-s", self.device_name] + cmd_args
-        result = subprocess.run(full_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        result = subprocess.run(full_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                creationflags=subprocess.CREATE_NO_WINDOW)
         return result.stdout.decode(errors="ignore")
 
     def screenshot(self):
         result = subprocess.run(
             [self.adb_path, "-s", self.device_name, "exec-out", "screencap", "-p"],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            creationflags=subprocess.CREATE_NO_WINDOW
         )
         if result.returncode != 0:
             raise RuntimeError(f"ADB 截图失败：{result.stderr.decode('utf-8')}")

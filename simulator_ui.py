@@ -148,9 +148,10 @@ class EmulatorSelector(QWidget):
         self.load_config_from_file(self.config_name_combo.currentText())
 
     def load_config_from_file(self, config_name):
-        log_util.log.print(f"加载配置{config_name}")
-        task_config = self.task_config_manager.load_config_from_file(config_name)
-        self.task_config_editor.load_config_editor(task_config)
+        if config_name:
+            log_util.log.print(f"加载配置{config_name}")
+            task_config = self.task_config_manager.load_config_from_file(config_name)
+            self.task_config_editor.load_config_editor(task_config)
 
     def refresh_config_file_list(self):
         self.config_name_combo.clear()
