@@ -5,6 +5,8 @@ import cv2
 import numpy as np
 
 import config_manager
+import log_util
+from log_util import Log
 
 
 class EmulatorExecutor:
@@ -41,7 +43,7 @@ class EmulatorExecutor:
         template = cv2.imread(template_path)
 
         if img_rgb is None or template is None:
-            print(f"[{self.name}] 图像读取失败")
+            log_util.log.print(f"[{self.name}] 图像读取失败")
             return False
 
         res = cv2.matchTemplate(img_rgb, template, cv2.TM_CCOEFF_NORMED)
@@ -51,9 +53,9 @@ class EmulatorExecutor:
             top_left = max_loc
             h, w = template.shape[:2]
             center_x, center_y = top_left[0] + w // 2, top_left[1] + h // 2
-            print(f"[{self.name}] 发现按钮，点击坐标: ({center_x}, {center_y})")
+            log_util.log.print(f"[{self.name}] 发现按钮，点击坐标: ({center_x}, {center_y})")
             self.click(center_x, center_y)
             return True
         else:
-            print(f"[{self.name}] 未识别到按钮")
+            log_util.log.print(f"[{self.name}] 未识别到按钮")
             return False

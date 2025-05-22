@@ -1,4 +1,5 @@
 # emulator_executor.py
+import log_util
 from emulator_executor import EmulatorExecutor
 
 TASK_REGISTRY = {}
@@ -26,14 +27,14 @@ class TaskExecutor:
     def execute_task(self, task_name, params):
         task_info = TASK_REGISTRY.get(task_name)
         if not task_info:
-            print(f"任务 {task_name} 未注册")
+            log_util.log.print(f"任务 {task_name} 未注册")
             return False
         func = task_info["func"]
         try:
-            print(f"[{self.emulator_name}] 执行任务: {task_name}，参数: {params}")
+            log_util.log.print(f"[{self.emulator_name}] 执行任务: {task_name}，参数: {params}")
             return func(self, params)
         except Exception as e:
-            print(f"执行任务 {task_name} 出错: {e}")
+            log_util.log.print(f"执行任务 {task_name} 出错: {e}")
             return False
 
     def execute_task_config(self, task_config):
@@ -41,7 +42,7 @@ class TaskExecutor:
             name = task["name"]
             params = task.get("params", {})
             if not self.execute_task(name, params):
-                print(f"任务 {name} 执行失败，停止后续任务")
+                log_util.log.print(f"任务 {name} 执行失败，停止后续任务")
                 break
 
 
@@ -54,7 +55,7 @@ def task_click_button(executor: TaskExecutor, params):
     template = params.get("template_path")
     threshold = float(params.get("threshold", 0.85))
     executor.emulator_executor.find_and_click_button(template, threshold)
-    print(f"{executor.emulator_name} 执行点击，模板: {template}，阈值: {threshold}")
+    log_util.log.print(f"{executor.emulator_name} 执行点击，模板: {template}，阈值: {threshold}")
     return True
 
 
@@ -63,7 +64,7 @@ def task_click_button(executor: TaskExecutor, params):
 ])
 def task_wait(executor: TaskExecutor, params):
     seconds = int(params.get("seconds", 1))
-    print(f"{executor.emulator_name} 等待 {seconds} 秒")
+    log_util.log.print(f"{executor.emulator_name} 等待 {seconds} 秒")
     import time
     time.sleep(seconds)
     return True
