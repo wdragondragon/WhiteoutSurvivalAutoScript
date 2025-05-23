@@ -175,6 +175,7 @@ class EmulatorSelector(QWidget):
         task_config = self.task_config_editor.get_task_config()
         config_name = self.config_name_combo.currentText().strip()
         self.task_config_manager.save_config_to_file(config_name, task_config)
+        self.refresh_config_file_list()
 
     def refresh_emulators(self):
         emulators = self.manager.get_all_emulators()
@@ -220,7 +221,7 @@ class EmulatorSelector(QWidget):
             self.selected_emulators.add(name)
         else:
             self.selected_emulators.discard(name)
-        log_util.log.print("当前选中：", self.selected_emulators)
+        log_util.log.print(f"当前选中: {','.join(self.selected_emulators)}")
 
     def on_bind_config_combo_changed(self, emu_name: str, config_name: str):
         log_util.log.print(f"配置绑定[{emu_name}]->[{config_name}]")
