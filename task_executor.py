@@ -1,4 +1,6 @@
 # emulator_executor.py
+import time
+
 import log_util
 from emulator_executor import EmulatorExecutor
 
@@ -44,6 +46,26 @@ class TaskExecutor:
             if not self.execute_task(name, params):
                 log_util.log.print(f"任务 {name} 执行失败，停止后续任务")
                 break
+
+
+@register_task("自动打开游戏", param_defs=[])
+def check_open(executor: TaskExecutor, params):
+    x, y, find = executor.emulator_executor.find_img("buttons/button1.png")
+    if find:
+        executor.emulator_executor.click(x, y)
+    return True
+
+
+@register_task("重新登录", param_defs=[{
+    "name": "interval", "type": "int", "default": 0, "desc": "重上等待时间/秒"
+}])
+def check_open(executor: TaskExecutor, params):
+    x, y, find = executor.emulator_executor.find_img("buttons/relogin.png")
+    if find:
+        inv = params.get("interval", 0)
+        time.sleep(inv)
+        executor.emulator_executor.click(x, y)
+    return True
 
 
 @register_task("点击按钮", param_defs=[
