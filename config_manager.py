@@ -46,11 +46,13 @@ class ConfigManager:
     def set_selected_emulators(self, emulators_list):
         self.config["selected_emulators"] = emulators_list
 
-    def get_emulator_bindings(self):
-        return self.config.get("emulator_bindings", {"模拟器1": "示例任务配置1"})
+    def get_emulator_bindings(self, emulator_name):
+        return self.config.get("emulator_bindings", {}).get(emulator_name)
 
-    def set_emulator_bindings(self, bindings):
-        self.config["emulator_bindings"] = bindings
+    def set_emulator_bindings(self, emulator_name, config_name):
+        if "emulator_bindings" not in self.config:
+            self.config["emulator_bindings"] = {}
+        self.config.get("emulator_bindings")[emulator_name] = config_name
 
 
 class TaskConfigManager:

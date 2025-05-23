@@ -3,15 +3,17 @@ from PyQt5.QtCore import QTimer, Qt, pyqtSignal, QThread
 from PyQt5.QtGui import QIcon, QPixmap, QPainter, QColor
 from PyQt5.QtWidgets import (
     QWidget, QListWidget, QPushButton, QHBoxLayout, QVBoxLayout,
-    QListWidgetItem, QLabel, QComboBox, QTabWidget, QTextEdit
+    QLabel, QComboBox, QTabWidget, QTextEdit, QTableWidget, QHeaderView, QTableWidgetItem, QCheckBox
 )
 
 import config_manager
 import log_util
 from TaskConfigEditor import TaskConfigEditor
-from config_manager import TaskConfigManager, ADB_PATH, LDCONSOLE_PATH
+from component.EmulatorCellWidget import EmulatorCellWidget
+from component.EmulatorComboBoxWidget import EmulatorComboBoxWidget
+from config_manager import TaskConfigManager, ADB_PATH, LDCONSOLE_PATH, ConfigManager
 from emulator_executor import EmulatorExecutor
-from log_util import Log, log
+from log_util import Log
 from simulator_manager import EmulatorManager
 from task_executor import TaskExecutor
 
@@ -62,18 +64,18 @@ class TaskThread(QThread):
 class EmulatorSelector(QWidget):
     log_pyqt_signal = pyqtSignal(str)
 
-    def __init__(self, config_mgr):
+    def __init__(self, config_mgr: ConfigManager):
         super().__init__()
         self.setWindowTitle("模拟器选择器")
         self.resize(1200, 400)
         log_util.log = Log(self.log_pyqt_signal)
         self.threads = {}
         self.is_running = False
-        self.config_mgr = config_mgr
+        self.config_mgr: ConfigManager = config_mgr
         self.task_config_manager: TaskConfigManager = TaskConfigManager()
 
-        self.manager = EmulatorManager(config_mgr.get("adb_path", ADB_PATH),
-                                       config_mgr.get("ldconsole_path", LDCONSOLE_PATH))
+        self.manager: EmulatorManager = EmulatorManager(config_mgr.get("adb_path", ADB_PATH),
+                                                        config_mgr.get("ldconsole_path", LDCONSOLE_PATH))
         self.status_icon_size = self.config_mgr.get("status_icon_size", 12)
         self.running_icon = create_status_icon("green", self.status_icon_size)
         self.stopped_icon = create_status_icon("gray", self.status_icon_size)
@@ -85,10 +87,6 @@ class EmulatorSelector(QWidget):
         self.list_widget.setSelectionMode(QListWidget.MultiSelection)
 
         self.task_config_editor = TaskConfigEditor()
-
-        self.main_layout = QHBoxLayout()
-        self.main_layout.addWidget(self.list_widget)
-        self.main_layout.addWidget(self.task_config_editor)
 
         self.select_all_button = QPushButton("全选")
         self.deselect_all_button = QPushButton("全不选")
@@ -109,23 +107,37 @@ class EmulatorSelector(QWidget):
         btn_layout.addWidget(self.deselect_all_button)
         btn_layout.addStretch()
         btn_layout.addWidget(self.start_button)
-        btn_layout.addWidget(self.save_button)
 
-        main_layout = QVBoxLayout()
-        main_layout.addLayout(self.main_layout)
-        main_layout.addLayout(btn_layout)
-        main_layout.addWidget(self.config_name_combo)
-        main_layout.addWidget(self.status_label)
-        self.main_tab = QWidget()
-        self.main_tab.setLayout(main_layout)
+        self.config_layout = QVBoxLayout()
+        self.config_layout.addWidget(self.task_config_editor)
+        self.config_save_layout = QHBoxLayout()
+        self.config_save_layout.addWidget(self.config_name_combo)
+        self.config_save_layout.addWidget(self.save_button)
+        self.config_layout.addLayout(self.config_save_layout)
+        self.config_tab = QWidget()
+        self.config_tab.setLayout(self.config_layout)
 
         self.log_text = QTextEdit()
         self.log_text.document().setMaximumBlockCount(1000)
         self.log_text.setReadOnly(True)
         self.log_pyqt_signal.connect(self.log_text.append)
 
+        self.table = QTableWidget(0, 2)
+        self.table.setHorizontalHeaderLabels(["模拟器", "绑定配置"])
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.table_layout = QVBoxLayout()
+        self.table_layout.addWidget(self.table)
+        self.table_layout.addLayout(btn_layout)
+        self.table_layout.addWidget(self.status_label)
+
+        self.emulator_table_tab = QWidget()
+        self.emulator_table_tab.setLayout(self.table_layout)
+
         self.tab_widget = QTabWidget()
-        self.tab_widget.addTab(self.main_tab, "配置")
+        self.tab_widget.addTab(self.emulator_table_tab, "模拟器列表")
+        self.tab_widget.addTab(self.config_tab, "配置")
         self.tab_widget.addTab(self.log_text, "日志")
 
         layout = QVBoxLayout()
@@ -133,16 +145,16 @@ class EmulatorSelector(QWidget):
         self.setLayout(layout)
 
         # 连接信号槽
-        self.select_all_button.clicked.connect(self.select_all)
-        self.deselect_all_button.clicked.connect(self.deselect_all)
+        self.select_all_button.clicked.connect(lambda: self.select_all(True))
+        self.deselect_all_button.clicked.connect(lambda: self.select_all(False))
         self.start_button.clicked.connect(self.toggle_execution)
-        self.list_widget.itemChanged.connect(self.handle_item_changed)
 
         # 定时刷新模拟器状态
         self.timer = QTimer()
         self.timer.timeout.connect(self.refresh_emulators)
         self.timer.start(5000)  # 5秒刷新一次
 
+        # self.refresh_emulators()
         self.refresh_emulators()
         self.refresh_config_file_list()
         self.load_config_from_file(self.config_name_combo.currentText())
@@ -166,31 +178,53 @@ class EmulatorSelector(QWidget):
 
     def refresh_emulators(self):
         emulators = self.manager.get_all_emulators()
-
-        # 保留旧选中状态
         old_selected = self.selected_emulators.copy()
 
-        self.list_widget.blockSignals(True)
-        self.list_widget.clear()
+        self.table.blockSignals(True)
+        self.table.setRowCount(0)
 
-        for emu in emulators:
-            item = QListWidgetItem(emu.name)
-            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
-            # 之前选中的恢复勾选
-            if emu.name in old_selected:
-                item.setCheckState(Qt.Checked)
-            else:
-                item.setCheckState(Qt.Unchecked)
+        for row, emu in enumerate(emulators):
+            self.table.insertRow(row)
 
-            # 状态图标（左侧）
-            icon = self.running_icon if emu.is_running() else self.stopped_icon
-            item.setIcon(icon)
+            emulator_item = EmulatorCellWidget(name=emu.name,
+                                               is_running=emu.is_running(),
+                                               running_icon=self.running_icon,
+                                               stopped_icon=self.stopped_icon,
+                                               is_checked=emu.name in old_selected)
 
-            self.list_widget.addItem(item)
+            emulator_item.checkedChanged.connect(self.on_emulator_checkbox_changed)
 
-        self.list_widget.blockSignals(False)
-        # 更新当前选中集合
-        self.selected_emulators = {item.text() for item in self.iter_checked_items()}
+            cur_config_name = self.config_mgr.get_emulator_bindings(emulator_name=emu.name)
+            config_combo_item = EmulatorComboBoxWidget(name=emu.name,
+                                                       items=self.task_config_manager.get_config_name_list(),
+                                                       current=cur_config_name)
+            config_combo_item.currentTextChanged.connect(self.on_bind_config_combo_changed)
+
+            self.table.setCellWidget(row, 0, emulator_item)
+            self.table.setCellWidget(row, 1, config_combo_item)
+
+        self.update_selected_emulators()
+        self.table.blockSignals(False)
+
+    def update_selected_emulators(self):
+        self.selected_emulators.clear()
+        for row in range(self.table.rowCount()):
+            table_item: EmulatorCellWidget = self.table.cellWidget(row, 0)
+            if table_item and table_item.is_checked():
+                name = table_item.get_name()
+                if name:
+                    self.selected_emulators.add(name)
+
+    def on_emulator_checkbox_changed(self, name: str, checked: bool):
+        if checked:
+            self.selected_emulators.add(name)
+        else:
+            self.selected_emulators.discard(name)
+        log_util.log.print("当前选中：", self.selected_emulators)
+
+    def on_bind_config_combo_changed(self, emu_name: str, config_name: str):
+        log_util.log.print(f"配置绑定[{emu_name}]->[{config_name}]")
+        self.config_mgr.set_emulator_bindings(emu_name, config_name)
 
     def iter_checked_items(self):
         for i in range(self.list_widget.count()):
@@ -198,25 +232,23 @@ class EmulatorSelector(QWidget):
             if item.checkState() == Qt.Checked:
                 yield item
 
-    def select_all(self):
-        self.list_widget.blockSignals(True)
-        for i in range(self.list_widget.count()):
-            self.list_widget.item(i).setCheckState(Qt.Checked)
-        self.list_widget.blockSignals(False)
-        self.selected_emulators = {item.text() for item in self.iter_checked_items()}
-
-    def deselect_all(self):
-        self.list_widget.blockSignals(True)
-        for i in range(self.list_widget.count()):
-            self.list_widget.item(i).setCheckState(Qt.Unchecked)
-        self.list_widget.blockSignals(False)
-        self.selected_emulators.clear()
-
-    def handle_item_changed(self, item):
-        if item.checkState() == Qt.Checked:
-            self.selected_emulators.add(item.text())
+    def select_all(self, checked: bool):
+        for row in range(self.table.rowCount()):
+            widget = self.table.cellWidget(row, 0)
+            if isinstance(widget, EmulatorCellWidget):
+                widget.set_checked(checked)
+        if checked:
+            self.selected_emulators = self.get_selected_emulator_names()
         else:
-            self.selected_emulators.discard(item.text())
+            self.selected_emulators.clear()
+
+    def get_selected_emulator_names(self) -> set:
+        selected_names = set()
+        for row in range(self.table.rowCount()):
+            widget = self.table.cellWidget(row, 0)
+            if isinstance(widget, EmulatorCellWidget) and widget.is_checked():
+                selected_names.add(widget.get_name())
+        return selected_names
 
     def start_execution(self):
         if not self.selected_emulators:
@@ -236,7 +268,8 @@ class EmulatorSelector(QWidget):
                                                                    emulator.name,
                                                                    emulator.device_name)
             task_executor: TaskExecutor = TaskExecutor(emulator_executor=emulator_executor)
-            task_config_name = self.config_name_combo.currentText().strip()
+            task_config_name = self.config_mgr.get_emulator_bindings(name)
+            print(f"运行{name}->{task_config_name}")
             task_config = self.task_config_manager.load_config_from_file(task_config_name)
             task_executor.execute_task_config(task_config)
         self.status_label.setText("✔️ 任务完成")
@@ -254,14 +287,13 @@ class EmulatorSelector(QWidget):
         self.is_running = True
         self.start_button.setText("停止执行")
         self.status_label.setText("▶️ 正在执行任务...")
-
-        task_config_name = self.config_name_combo.currentText().strip()
-        task_config = self.task_config_manager.load_config_from_file(task_config_name)
-
         for name in self.selected_emulators:
             emulator = next((e for e in self.manager.get_all_emulators() if e.name == name), None)
             if not emulator:
                 continue
+            task_config_name = self.config_mgr.get_emulator_bindings(name)
+            log_util.log.print(f"[启动{name}]->配置[{task_config_name}]")
+            task_config = self.task_config_manager.load_config_from_file(task_config_name)
             thread = TaskThread(emulator, task_config, config_manager.ADB_PATH)
             thread.log_signal.connect(log_util.log.print)
             thread.finished_signal.connect(self.thread_finished)
