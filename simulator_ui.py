@@ -40,6 +40,7 @@ class TaskThread(QThread):
         self.task_config = task_config
         self.adb_path = adb_path
         self._is_running = True
+        self.task_executor: TaskExecutor = None
 
     def run(self):
         if not self.emulator.is_running():
@@ -48,10 +49,10 @@ class TaskThread(QThread):
             return
 
         executor = EmulatorExecutor(config_manager.ADB_PATH, self.emulator.name, self.emulator.device_name)
-        task_executor = TaskExecutor(emulator_executor=executor)
+        self.task_executor = TaskExecutor(emulator_executor=executor)
 
         while self._is_running:
-            task_executor.execute_task_config(self.task_config)
+            self.task_executor.execute_task_config(self.task_config)
             self.log_signal.emit(f"✅ {self.emulator.name} 执行完毕，3秒后再次执行")
             self.sleep(3)
 
@@ -59,6 +60,8 @@ class TaskThread(QThread):
 
     def stop(self):
         self._is_running = False
+        if self.task_executor:
+            self.task_executor.close()
 
 
 class EmulatorSelector(QWidget):
@@ -67,9 +70,9 @@ class EmulatorSelector(QWidget):
     def __init__(self, config_mgr: ConfigManager):
         super().__init__()
         self.setWindowTitle("模拟器选择器")
-        self.resize(1200, 400)
+        self.resize(800, 400)
         log_util.log = Log(self.log_pyqt_signal)
-        self.threads = {}
+        self.threads: dict[str:TaskThread] = {}
         self.is_running = False
         self.config_mgr: ConfigManager = config_mgr
         self.task_config_manager: TaskConfigManager = TaskConfigManager()
@@ -293,6 +296,8 @@ class EmulatorSelector(QWidget):
             if not emulator:
                 continue
             task_config_name = self.config_mgr.get_emulator_bindings(name)
+            if not task_config_name and self.config_name_combo.size() != 0:
+                task_config_name = self.config_name_combo.currentText()
             log_util.log.print(f"[启动{name}]->配置[{task_config_name}]")
             task_config = self.task_config_manager.load_config_from_file(task_config_name)
             thread = TaskThread(emulator, task_config, config_manager.ADB_PATH)
@@ -305,7 +310,6 @@ class EmulatorSelector(QWidget):
         self.status_label.setText("⏹️ 正在停止任务...")
         self.start_button.setText("开始执行")
         self.is_running = False
-
         for name, thread in self.threads.items():
             thread.stop()
         self.threads.clear()

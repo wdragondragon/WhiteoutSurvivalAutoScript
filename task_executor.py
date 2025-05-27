@@ -7,19 +7,42 @@ from emulator_executor import EmulatorExecutor
 TASK_REGISTRY = {}
 
 
-def register_task(name, param_defs=None):
+def register_task(name, param_defs=None, pre_task=None, after_task=None):
     def decorator(func):
+        def wrapper(*args, **kwargs):
+            try:
+                executor: TaskExecutor = args[0]
+                if pre_task:
+                    for task in pre_task:
+                        if type(task) == dict:
+                            executor.execute_task(task.get("name"), task.get("param"))
+                        else:
+                            executor.execute_task(task, {})
+                result = func(*args, **kwargs)
+                if after_task:
+                    for task in after_task:
+                        if type(task) == dict:
+                            executor.execute_task(task.get("name"), task.get("param"))
+                        else:
+                            executor.execute_task(task, {})
+            except Exception as e:
+                log_util.log.print(f"任务 {name} 执行出错：{e}")
+                raise
+            return result
+
         TASK_REGISTRY[name] = {
-            "func": func,
+            "func": wrapper,
             "param_defs": param_defs or []
         }
-        return func
+        return wrapper
 
     return decorator
 
 
 class TaskExecutor:
+
     def __init__(self, emulator_name=None, emulator_executor: EmulatorExecutor = None):
+        self.run_status = True
         if emulator_name is None:
             self.emulator_name = emulator_executor.name
         else:
@@ -27,13 +50,14 @@ class TaskExecutor:
         self.emulator_executor = emulator_executor
 
     def execute_task(self, task_name, params):
+        if not params:
+            params = {}
         task_info = TASK_REGISTRY.get(task_name)
         if not task_info:
             log_util.log.print(f"任务 {task_name} 未注册")
             return False
         func = task_info["func"]
         try:
-            log_util.log.print(f"[{self.emulator_name}] 执行任务: {task_name}，参数: {params}")
             return func(self, params)
         except Exception as e:
             log_util.log.print(f"执行任务 {task_name} 出错: {e}")
@@ -47,11 +71,18 @@ class TaskExecutor:
                 log_util.log.print(f"任务 {name} 执行失败，停止后续任务")
                 break
 
+    def close(self):
+        self.run_status = False
+
+    def get_run_status(self):
+        return self.run_status
+
 
 @register_task("自动打开游戏", param_defs=[])
 def check_open(executor: TaskExecutor, params):
     x, y, find = executor.emulator_executor.find_img("buttons/button1.png")
     if find:
+        log_util.log.print(f"[{executor.emulator_name}] 识别到游戏未打开，打开游戏")
         executor.emulator_executor.click(x, y)
     return True
 
@@ -59,36 +90,57 @@ def check_open(executor: TaskExecutor, params):
 @register_task("重新登录", param_defs=[{
     "name": "interval", "type": "int", "default": 0, "desc": "重上等待时间/秒"
 }])
-def check_open(executor: TaskExecutor, params):
+def re_login(executor: TaskExecutor, params):
     x, y, find = executor.emulator_executor.find_img("buttons/relogin.png")
     if find:
         inv = params.get("interval", 0)
+        log_util.log.print(f"[{executor.emulator_name}] 识别到游戏未登录，等待{inv}秒后重新登录")
         time.sleep(inv)
+        log_util.log.print(f"[{executor.emulator_name}] 执行游戏重新登录")
         executor.emulator_executor.click(x, y)
     return True
 
 
-@register_task("点击按钮", param_defs=[
-    {"name": "template_path", "type": "str", "default": "buttons/button1.png", "desc": "按钮模板路径"},
-    {"name": "threshold", "type": "float", "default": 0.85, "desc": "匹配阈值(0-1)"}
-])
-def task_click_button(executor: TaskExecutor, params):
-    # 模拟执行点击操作
-    template = params.get("template_path")
-    threshold = float(params.get("threshold", 0.85))
-    executor.emulator_executor.find_and_click_button(template, threshold)
-    log_util.log.print(f"{executor.emulator_name} 执行点击，模板: {template}，阈值: {threshold}")
+@register_task("返回主页", pre_task=["自动打开游戏", "重新登录"])
+def back_home(executor: TaskExecutor, params):
+    back_image_path = ["buttons/back.png", "buttons/back2.png", "buttons/back3.png"]
+    x, y, find = executor.emulator_executor.find_img(back_image_path)
+    while find:
+        log_util.log.print(f"[{executor.emulator_name}] 点击返回")
+        executor.emulator_executor.click(x, y)
+        time.sleep(0.5)
+        x, y, find = executor.emulator_executor.find_img(back_image_path)
     return True
 
 
-@register_task("等待", param_defs=[
-    {"name": "seconds", "type": "int", "default": 1, "desc": "等待秒数"}
-])
-def task_wait(executor: TaskExecutor, params):
-    seconds = int(params.get("seconds", 1))
-    log_util.log.print(f"{executor.emulator_name} 等待 {seconds} 秒")
-    import time
-    time.sleep(seconds)
+@register_task("打开联盟", pre_task=["自动打开游戏", "重新登录"])
+def click_lm(executor: TaskExecutor, params):
+    x, y, find = executor.emulator_executor.find_img("buttons/lm.png")
+    if find:
+        log_util.log.print(f"[{executor.emulator_name}] 进入联盟页")
+        executor.emulator_executor.click(x, y)
+    return True
+
+
+@register_task("自动洗练")
+def pet_page(executor: TaskExecutor, params):
+    region = (290, 225, 324, 250)
+    i = 0
+    while executor.run_status:
+        _, _, up = executor.emulator_executor.find_img("buttons/up.png", region=region, threshold=0.75)
+        _, _, down = executor.emulator_executor.find_img("buttons/down.png", region=region, threshold=0.65)
+        _, _, zero = executor.emulator_executor.find_img("buttons/add_zero.png", region=(261, 231, 294, 250),
+                                                         threshold=0.60)
+        if up:
+            log_util.log.print(f"[{executor.emulator_name}] 洗练替换")
+            executor.emulator_executor.find_and_click_button("buttons/replaced.png")
+        elif down or zero:
+            log_util.log.print(f"[{executor.emulator_name}] 洗练重洗")
+            executor.emulator_executor.find_and_click_button("buttons/re_baptize.png")
+            time.sleep(0.2)
+        else:
+            executor.emulator_executor.find_and_click_button("buttons/baptize.png")
+        i += 1
     return True
 
 

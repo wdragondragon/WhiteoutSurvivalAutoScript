@@ -1,5 +1,6 @@
 # emulator_executor.py
 import subprocess
+from typing import Union, List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -60,30 +61,49 @@ class EmulatorExecutor:
         return False
 
     def find_and_click_button(self, template_path="buttons/button1.png", threshold=config_manager.MATCH_THRESHOLD):
-        x, y, find = self.find_and_click_text(template_path, threshold)
+        x, y, find = self.find_img(template_path, threshold)
         if find:
-            log_util.log.print(f"[{self.name}] 点击坐标: ({x}, {y})")
+            # log_util.log.print(f"[{self.name}] 点击坐标: ({x}, {y})")
             self.click(x, y)
             return True
         else:
             return False
 
-    def find_img(self, template_path, threshold=config_manager.MATCH_THRESHOLD):
+    def find_img(self,
+                 template_path: Union[str, List[str]],
+                 threshold: float = config_manager.MATCH_THRESHOLD,
+                 region: Optional[Tuple[int, int, int, int]] = None,
+                 ) -> Tuple[Optional[int], Optional[int], bool]:
         img_rgb = self.screenshot()
-        template = cv2.imread(template_path)
-
-        if img_rgb is None or template is None:
-            log_util.log.print(f"[{self.name}] 图像读取失败")
-            return False
-
-        res = cv2.matchTemplate(img_rgb, template, cv2.TM_CCOEFF_NORMED)
-        min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
-        if max_val >= threshold:
-            top_left = max_loc
-            h, w = template.shape[:2]
-            center_x, center_y = top_left[0] + w // 2, top_left[1] + h // 2
-            log_util.log.print(f"[{self.name}] 图片坐标: ({center_x}, {center_y})")
-            return center_x, center_y, True
-        else:
-            log_util.log.print(f"[{self.name}] 未识别到图片")
+        if img_rgb is None:
+            log_util.log.print(f"[{self.name}] 截图失败")
             return None, None, False
+
+        if region:
+            x1, y1, x2, y2 = region
+            img_rgb = img_rgb[y1:y2, x1:x2]
+        cv2.imwrite("test.png", img_rgb)
+        img_gray = cv2.cvtColor(img_rgb, cv2.COLOR_BGR2GRAY)
+        # img_gray = cv2.Canny(cv2.cvtColor(img_rgb, cv2.COLOR_BGR2GRAY), 50, 200)
+
+        if isinstance(template_path, str):
+            template_path = [template_path]
+
+        for path in template_path:
+            template = cv2.imread(path)
+            if template is None:
+                log_util.log.print(f"[{self.name}] 模板图像读取失败: {path}")
+                continue
+
+            template_gray = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
+            # template_gray = cv2.Canny(cv2.cvtColor(template, cv2.COLOR_BGR2GRAY), 50, 200)
+            res = cv2.matchTemplate(img_gray, template_gray, cv2.TM_CCOEFF_NORMED)
+            _, max_val, _, max_loc = cv2.minMaxLoc(res)
+            if max_val >= threshold:
+                top_left = max_loc
+                h, w = template.shape[:2]
+                center_x, center_y = top_left[0] + w // 2, top_left[1] + h // 2
+                # log_util.log.print(f"[{self.name}] 图片坐标: ({center_x}, {center_y})，相似度: {max_val:.2f}")
+                return center_x, center_y, True
+
+        return None, None, False
