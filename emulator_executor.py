@@ -99,11 +99,12 @@ class EmulatorExecutor:
             # template_gray = cv2.Canny(cv2.cvtColor(template, cv2.COLOR_BGR2GRAY), 50, 200)
             res = cv2.matchTemplate(img_gray, template_gray, cv2.TM_CCOEFF_NORMED)
             _, max_val, _, max_loc = cv2.minMaxLoc(res)
+            log_util.log.print(f"[{self.name}] 图片{path}，相似度: {max_val:.2f}")
             if max_val >= threshold:
                 top_left = max_loc
                 h, w = template.shape[:2]
                 center_x, center_y = top_left[0] + w // 2, top_left[1] + h // 2
-                # log_util.log.print(f"[{self.name}] 图片坐标: ({center_x}, {center_y})，相似度: {max_val:.2f}")
+                log_util.log.print(f"[{self.name}] 图片坐标: ({center_x}, {center_y})，相似度: {max_val:.2f}")
                 return center_x, center_y, True
 
         return None, None, False
