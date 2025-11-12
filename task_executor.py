@@ -128,36 +128,48 @@ def click_lm(executor: TaskExecutor, params):
 @register_task("建棋", pre_task=["打开联盟"])
 def click_lm(executor: TaskExecutor, params):
     x, y, find = executor.emulator_executor.find_img("buttons/lmld.png")
-    if find:
-        log_util.log.print(f"[{executor.emulator_name}] 进入联盟领地")
-        executor.emulator_executor.click(x, y)
-        time.sleep(0.5)
-        x, y, find = executor.emulator_executor.find_img("buttons/ldjz.png")
-        if find:
-            log_util.log.print(f"[{executor.emulator_name}] 进入领地建筑")
-            executor.emulator_executor.click(x, y)
-            time.sleep(0.5)
-            x, y, find = executor.emulator_executor.find_img("buttons/jqqw.png")
-            if find:
-                log_util.log.print(f"[{executor.emulator_name}] 前往建旗")
-                executor.emulator_executor.click(x, y)
-                time.sleep(0.5)
-                executor.emulator_executor.click(225, 392)
-                time.sleep(0.5)
-                x, y, find = executor.emulator_executor.find_img("buttons/jz.png")
-                if find:
-                    log_util.log.print(f"[{executor.emulator_name}] 点击建造")
-                    executor.emulator_executor.click(x, y)
-                    time.sleep(0.5)
-                    x, y, find = executor.emulator_executor.find_img("buttons/pqbd.png")
-                    if find:
-                        log_util.log.print(f"[{executor.emulator_name}] 派遣部队")
-                        executor.emulator_executor.click(x, y)
-                        time.sleep(0.5)
-                        x, y, find = executor.emulator_executor.find_img("buttons/cz.png")
-                        if find:
-                            log_util.log.print(f"[{executor.emulator_name}] 出征")
-                            executor.emulator_executor.click(x, y)
+    if not find:
+        return
+
+    log_util.log.print(f"[{executor.emulator_name}] 进入联盟领地")
+    executor.emulator_executor.click(x, y)
+    time.sleep(0.5)
+    x, y, find = executor.emulator_executor.find_img("buttons/ldjz.png")
+    if not find:
+        return True
+
+    log_util.log.print(f"[{executor.emulator_name}] 进入领地建筑")
+    executor.emulator_executor.click(x, y)
+    time.sleep(0.5)
+    x, y, find = executor.emulator_executor.find_img("buttons/jqqw.png")
+    if not find:
+        return True
+
+    log_util.log.print(f"[{executor.emulator_name}] 前往建旗")
+    executor.emulator_executor.click(x, y)
+    time.sleep(0.5)
+    executor.emulator_executor.click(225, 392)
+    time.sleep(0.5)
+    x, y, find = executor.emulator_executor.find_img("buttons/jz.png")
+    if not find:
+        return True
+
+    log_util.log.print(f"[{executor.emulator_name}] 点击建造")
+    executor.emulator_executor.click(x, y)
+    time.sleep(0.5)
+    x, y, find = executor.emulator_executor.find_img("buttons/pqbd.png")
+    if not find:
+        return True
+
+    log_util.log.print(f"[{executor.emulator_name}] 派遣部队")
+    executor.emulator_executor.click(x, y)
+    time.sleep(0.5)
+    x, y, find = executor.emulator_executor.find_img("buttons/cz.png")
+    if not find:
+        return True
+
+    log_util.log.print(f"[{executor.emulator_name}] 出征")
+    executor.emulator_executor.click(x, y)
     return True
 
 
