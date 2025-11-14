@@ -81,23 +81,3 @@ class TaskExecutor:
 
     def get_run_status(self):
         return self.run_status
-
-    # ======================
-    # ✅ 新增：自动加载任务方法
-    # ======================
-    @staticmethod
-    def load_all_tasks(tasks_pkg_name="tasks"):
-        """
-        自动加载任务模块：
-        - 默认扫描 'tasks' 目录下的所有 py 文件
-        - 自动 import 模块，从而触发 @register_task 装饰器注册逻辑
-        """
-        try:
-            tasks_pkg = importlib.import_module(tasks_pkg_name)
-            for module_info in pkgutil.walk_packages(tasks_pkg.__path__, f"{tasks_pkg_name}."):
-                importlib.import_module(module_info.name)
-            log_util.log.print(f"已加载所有任务模块，共 {len(TASK_REGISTRY)} 个任务")
-        except ModuleNotFoundError:
-            log_util.log.print(f"未找到任务目录：{tasks_pkg_name}")
-        except Exception as e:
-            log_util.log.print(f"加载任务模块时出错：{e}")

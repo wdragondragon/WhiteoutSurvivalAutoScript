@@ -5,17 +5,13 @@ from PyQt5.QtWidgets import QApplication
 
 from config_manager import ConfigManager
 from simulator_ui import EmulatorSelector
-from utils import step_defined
-from task_executor import TaskExecutor
+from utils import task_defined
 
 if __name__ == '__main__':
     config_mgr = ConfigManager("config.json")
 
     # 自动加载所有任务
-    TaskExecutor.load_all_tasks()
-
-    # 1. 自动加载所有 YAML 任务
-    step_defined.load_yaml_tasks()
+    task_defined.load_all_tasks()
 
     app = QApplication(sys.argv)
     win = EmulatorSelector(config_mgr)

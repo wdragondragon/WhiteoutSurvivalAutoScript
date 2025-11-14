@@ -3,9 +3,12 @@ import os
 import yaml
 
 import log_util
+import task_executor
 from event_util import click_img
 from task_executor import TaskExecutor, register_task
 from utils.task_flow import TaskFlow
+import importlib
+import pkgutil
 
 ACTION_MAP = {
     "click_img": lambda executor, params: click_img(
@@ -53,3 +56,25 @@ def load_yaml_tasks(tasks_dir="tasks"):
         # 注册任务
         register_task(task_name, pre_task=pre_task)(make_task(steps, pre_task))
         log_util.log.print(f"[YAML注册] 已注册任务: {task_name}")
+
+
+# ======================
+# ✅ 新增：自动加载任务方法
+# ======================
+def load_all_tasks(tasks_pkg_name="tasks"):
+    """
+    自动加载任务模块：
+    - 默认扫描 'tasks' 目录下的所有 py 文件
+    - 自动 import 模块，从而触发 @register_task 装饰器注册逻辑
+    """
+    try:
+        tasks_pkg = importlib.import_module(tasks_pkg_name)
+        for module_info in pkgutil.walk_packages(tasks_pkg.__path__, f"{tasks_pkg_name}."):
+            importlib.import_module(module_info.name)
+        load_yaml_tasks()
+        # 自动加载所有 YAML 任务
+        log_util.log.print(f"已加载所有任务模块，共 {len(task_executor.TASK_REGISTRY)} 个任务")
+    except ModuleNotFoundError:
+        log_util.log.print(f"未找到任务目录：{tasks_pkg_name}")
+    except Exception as e:
+        log_util.log.print(f"加载任务模块时出错：{e}")
