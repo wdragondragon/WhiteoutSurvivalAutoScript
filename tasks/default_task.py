@@ -44,7 +44,12 @@ def back_home(executor: TaskExecutor, params):
     return TaskStatus.SUCCESS
 
 
-# @register_task("打开联盟", pre_task=["自动打开游戏", "重新登录"])
+# @register_task("打开联盟2", pre_task=["自动打开游戏", "重新登录"], param_defs=[{
+#     "name": "interval", "desc": "重上等待时间/秒",
+#     "sub": [
+#         {"name": "interval", "type": "int", "default": 0}
+#     ]
+# }])
 # def click_lm(executor: TaskExecutor, params):
 #     back_home(executor, params)
 #     x, y, find = executor.emulator_executor.find_img("buttons/lm.png")

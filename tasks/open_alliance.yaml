@@ -17,3 +17,9 @@ param_defs:
     desc: 自定义
     default: 1
     type: int
+  - name: mode
+    desc: 模式
+    options:
+      - 正常
+      - 快速
+    type: enum

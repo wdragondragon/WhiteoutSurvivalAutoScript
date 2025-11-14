@@ -1,6 +1,6 @@
 from PyQt5.QtWidgets import (
     QWidget, QListWidget, QPushButton, QVBoxLayout, QHBoxLayout,
-    QFormLayout, QLineEdit, QLabel, QSpinBox, QDoubleSpinBox, QMessageBox
+    QFormLayout, QLineEdit, QLabel, QSpinBox, QDoubleSpinBox, QMessageBox, QComboBox
 )
 
 from task_executor import TASK_REGISTRY
@@ -116,6 +116,11 @@ class TaskConfigEditor(QWidget):
                 widget.setRange(0.0, 1.0)
                 widget.setSingleStep(0.01)
                 widget.setValue(float(default) if default != "" else 0.0)
+            elif ptype == "enum":
+                widget = QComboBox()
+                for v in param_def["options"]:
+                    widget.addItem(v)
+                widget.setCurrentText(default)
             else:
                 widget = QLineEdit(str(default))
 
