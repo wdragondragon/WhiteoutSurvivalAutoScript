@@ -1,8 +1,19 @@
 name: 打开联盟
-pre_task:
-  - 返回主页
+#pre_task:
+#  - 返回主页
 steps:
+  - name: 返回主页
+    action: exist_task
+    params:
+      name: name
+      path: path
   - name: 点击联盟
     action: click_img
     img_path: buttons/lm.png
     desc: 联盟按钮
+
+param_defs:
+  - name: interval
+    desc: 自定义
+    default: 1
+    type: int

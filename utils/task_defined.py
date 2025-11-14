@@ -32,29 +32,40 @@ def load_yaml_tasks(tasks_dir="tasks"):
 
         task_name = data["name"]
         pre_task = data.get("pre_task", [])
-        steps = data.get("steps", [])
+        param_defs = data.get("param_defs", [])
 
         # 动态创建任务函数
-        def make_task(steps, pre_task):
+        def make_task(steps):
+
             def task_func(executor: TaskExecutor, params):
+
                 flow = TaskFlow(executor)
                 for s in steps:
-                    action_func = ACTION_MAP.get(s["action"])
-                    if not action_func:
-                        log_util.log.print(f"未定义动作: {s['action']}")
-                        continue
-                    # 每步封装 lambda
-                    flow.step(
-                        s["name"],
-                        lambda c=s: action_func(executor, s),
-                        retry=s.get("retry", 1)
-                    )
+                    action = s["action"]
+                    if action == "exist_task":
+                        # 每步封装 lambda
+                        flow.step(
+                            s["name"],
+                            lambda s_=s: executor.execute_task(s_["name"], s_["params"]),  # 使用 s_ 作为默认参数名
+                            retry=s.get("retry", 1)
+                        )
+                    else:
+                        action_func = ACTION_MAP.get(s["action"])
+                        if not action_func:
+                            log_util.log.print(f"未定义动作: {s['action']}")
+                            continue
+                        # 每步封装 lambda
+                        flow.step(
+                            s["name"],
+                            lambda s_=s: action_func(executor, s_),  # 使用 s_ 作为默认参数名
+                            retry=s.get("retry", 1)
+                        )
                 return flow.run()
 
             return task_func
 
         # 注册任务
-        register_task(task_name, pre_task=pre_task)(make_task(steps, pre_task))
+        register_task(task_name, pre_task=pre_task, param_defs=param_defs)(make_task(data.get("steps", [])))
         log_util.log.print(f"[YAML注册] 已注册任务: {task_name}")
 
 
