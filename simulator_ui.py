@@ -94,6 +94,8 @@ class EmulatorSelector(QWidget):
         self.select_all_button = QPushButton("全选")
         self.deselect_all_button = QPushButton("全不选")
         self.start_button = QPushButton("开始执行")
+        self.start_emulator_button = QPushButton("启动模拟器")
+        self.stop_emulator_button = QPushButton("关闭模拟器")
         self.status_label = QLabel("状态：空闲")
 
         # 底部：配置命名与执行
@@ -110,6 +112,8 @@ class EmulatorSelector(QWidget):
         btn_layout.addWidget(self.deselect_all_button)
         btn_layout.addStretch()
         btn_layout.addWidget(self.start_button)
+        btn_layout.addWidget(self.start_emulator_button)
+        btn_layout.addWidget(self.stop_emulator_button)
 
         self.config_layout = QVBoxLayout()
         self.config_layout.addWidget(self.task_config_editor)
@@ -151,6 +155,8 @@ class EmulatorSelector(QWidget):
         self.select_all_button.clicked.connect(lambda: self.select_all(True))
         self.deselect_all_button.clicked.connect(lambda: self.select_all(False))
         self.start_button.clicked.connect(self.toggle_execution)
+        self.start_emulator_button.clicked.connect(self.start_selected_emulators)
+        self.stop_emulator_button.clicked.connect(self.stop_selected_emulators)
 
         # 定时刷新模拟器状态
         self.timer = QTimer()
@@ -180,11 +186,22 @@ class EmulatorSelector(QWidget):
         self.task_config_manager.save_config_to_file(config_name, task_config)
         self.refresh_config_file_list()
 
-    def refresh_emulators(self):
-        emulators = self.manager.get_all_emulators()
-        old_selected = self.selected_emulators.copy()
+    def _current_emulator_row_names(self):
+        names = []
+        for row in range(self.table.rowCount()):
+            widget = self.table.cellWidget(row, 0)
+            if isinstance(widget, EmulatorCellWidget):
+                names.append(widget.get_name())
+        return names
 
-        self.table.blockSignals(True)
+    def _restore_table_scroll(self, vertical_value, horizontal_value):
+        vertical_bar = self.table.verticalScrollBar()
+        horizontal_bar = self.table.horizontalScrollBar()
+        vertical_bar.setValue(min(vertical_value, vertical_bar.maximum()))
+        horizontal_bar.setValue(min(horizontal_value, horizontal_bar.maximum()))
+
+    def _rebuild_emulator_table(self, emulators, selected_names):
+        config_names = self.task_config_manager.get_config_name_list()
         self.table.setRowCount(0)
 
         for row, emu in enumerate(emulators):
@@ -194,13 +211,13 @@ class EmulatorSelector(QWidget):
                                                is_running=emu.is_running(),
                                                running_icon=self.running_icon,
                                                stopped_icon=self.stopped_icon,
-                                               is_checked=emu.name in old_selected)
+                                               is_checked=emu.name in selected_names)
 
             emulator_item.checkedChanged.connect(self.on_emulator_checkbox_changed)
 
             cur_config_name = self.config_mgr.get_emulator_bindings(emulator_name=emu.name)
             config_combo_item = EmulatorComboBoxWidget(name=emu.name,
-                                                       items=self.task_config_manager.get_config_name_list(),
+                                                       items=config_names,
                                                        current=cur_config_name)
             config_combo_item.currentTextChanged.connect(self.on_bind_config_combo_changed)
 
@@ -208,7 +225,30 @@ class EmulatorSelector(QWidget):
             self.table.setCellWidget(row, 1, config_combo_item)
 
         self.update_selected_emulators()
-        self.table.blockSignals(False)
+
+    def refresh_emulators(self):
+        emulators = self.manager.get_all_emulators()
+        selected_names = self.selected_emulators.copy()
+        emulator_names = [emu.name for emu in emulators]
+        current_names = self._current_emulator_row_names()
+        vertical_value = self.table.verticalScrollBar().value()
+        horizontal_value = self.table.horizontalScrollBar().value()
+
+        self.table.setUpdatesEnabled(False)
+        self.table.blockSignals(True)
+        try:
+            if current_names != emulator_names:
+                self._rebuild_emulator_table(emulators, selected_names)
+            else:
+                for row, emu in enumerate(emulators):
+                    widget = self.table.cellWidget(row, 0)
+                    if isinstance(widget, EmulatorCellWidget):
+                        widget.set_status(emu.is_running())
+        finally:
+            self.table.blockSignals(False)
+            self.table.setUpdatesEnabled(True)
+            self._restore_table_scroll(vertical_value, horizontal_value)
+            QTimer.singleShot(0, lambda: self._restore_table_scroll(vertical_value, horizontal_value))
 
     def update_selected_emulators(self):
         self.selected_emulators.clear()
@@ -253,6 +293,68 @@ class EmulatorSelector(QWidget):
             if isinstance(widget, EmulatorCellWidget) and widget.is_checked():
                 selected_names.add(widget.get_name())
         return selected_names
+
+    def get_selected_emulator_names_in_table_order(self):
+        selected_names = []
+        for row in range(self.table.rowCount()):
+            widget = self.table.cellWidget(row, 0)
+            if isinstance(widget, EmulatorCellWidget) and widget.is_checked():
+                selected_names.append(widget.get_name())
+        return selected_names
+
+    def start_selected_emulators(self):
+        selected_names = self.get_selected_emulator_names_in_table_order()
+        if not selected_names:
+            self.status_label.setText("请先选择要启动的模拟器")
+            return
+
+        emulators = {emu.name: emu for emu in self.manager.get_all_emulators()}
+        started_count = 0
+        for name in selected_names:
+            emulator = emulators.get(name)
+            if not emulator:
+                log_util.log.print(f"[启动模拟器] 未找到 {name}")
+                continue
+            if emulator.is_running():
+                log_util.log.print(f"[启动模拟器] {name} 已在运行，跳过")
+                continue
+            if self.manager.start_emulator(emulator.index):
+                started_count += 1
+                log_util.log.print(f"[启动模拟器] 已发送启动命令: {name}")
+            else:
+                log_util.log.print(f"[启动模拟器] 启动失败: {name}")
+
+        self.status_label.setText(f"已发送启动命令：{started_count} 个模拟器")
+        QTimer.singleShot(2000, self.refresh_emulators)
+        QTimer.singleShot(6000, self.refresh_emulators)
+
+    def stop_selected_emulators(self):
+        selected_names = self.get_selected_emulator_names_in_table_order()
+        if not selected_names:
+            self.status_label.setText("请先选择要关闭的模拟器")
+            return
+
+        emulators = {emu.name: emu for emu in self.manager.get_all_emulators()}
+        stopped_count = 0
+        for name in selected_names:
+            emulator = emulators.get(name)
+            if not emulator:
+                log_util.log.print(f"[关闭模拟器] 未找到 {name}")
+                continue
+            if name in self.threads:
+                self.threads[name].stop()
+            if not emulator.is_running():
+                log_util.log.print(f"[关闭模拟器] {name} 未运行，跳过")
+                continue
+            if self.manager.stop_emulator(emulator.index):
+                stopped_count += 1
+                log_util.log.print(f"[关闭模拟器] 已发送关闭命令: {name}")
+            else:
+                log_util.log.print(f"[关闭模拟器] 关闭失败: {name}")
+
+        self.status_label.setText(f"已发送关闭命令：{stopped_count} 个模拟器")
+        QTimer.singleShot(1000, self.refresh_emulators)
+        QTimer.singleShot(3000, self.refresh_emulators)
 
     def start_execution(self):
         if not self.selected_emulators:

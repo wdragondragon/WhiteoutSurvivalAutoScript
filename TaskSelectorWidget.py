@@ -1,7 +1,7 @@
 from PyQt5.QtWidgets import (
     QWidget, QListWidget, QFormLayout, QLabel, QLineEdit,
     QVBoxLayout, QHBoxLayout, QSpinBox, QDoubleSpinBox,
-    QPushButton, QComboBox, QMessageBox, QScrollArea
+    QPushButton, QComboBox, QMessageBox, QScrollArea, QCheckBox
 )
 
 from task_executor import TASK_REGISTRY
@@ -83,6 +83,9 @@ class TaskSelectorWidget(QWidget):
                     widget.addItem(option)
                 if default in param.get("options", []):
                     widget.setCurrentText(default)
+            elif ptype == "bool":
+                widget = QCheckBox()
+                widget.setChecked(default in (True, 1, "1", "true", "True", "yes", "是"))
             else:
                 widget = QLabel(f"不支持的参数类型: {ptype}")
 
@@ -99,6 +102,8 @@ class TaskSelectorWidget(QWidget):
                 result[name] = widget.value()
             elif isinstance(widget, QComboBox):
                 result[name] = widget.currentText()
+            elif isinstance(widget, QCheckBox):
+                result[name] = widget.isChecked()
         return result
 
     def validate_params(self):

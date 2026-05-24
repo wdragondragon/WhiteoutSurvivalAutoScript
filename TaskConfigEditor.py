@@ -1,6 +1,6 @@
 from PyQt5.QtWidgets import (
     QWidget, QListWidget, QPushButton, QVBoxLayout, QHBoxLayout,
-    QFormLayout, QLineEdit, QLabel, QSpinBox, QDoubleSpinBox, QMessageBox
+    QFormLayout, QLineEdit, QLabel, QSpinBox, QDoubleSpinBox, QMessageBox, QCheckBox, QComboBox
 )
 
 from task_executor import TASK_REGISTRY
@@ -116,6 +116,15 @@ class TaskConfigEditor(QWidget):
                 widget.setRange(0.0, 1.0)
                 widget.setSingleStep(0.01)
                 widget.setValue(float(default) if default != "" else 0.0)
+            elif ptype == "bool":
+                widget = QCheckBox()
+                widget.setChecked(default in (True, 1, "1", "true", "True", "yes", "是"))
+            elif ptype == "choice":
+                widget = QComboBox()
+                for option in param_def.get("options", []):
+                    widget.addItem(option)
+                if str(default) in param_def.get("options", []):
+                    widget.setCurrentText(str(default))
             else:
                 widget = QLineEdit(str(default))
 
@@ -131,6 +140,10 @@ class TaskConfigEditor(QWidget):
                 value = widget.text()
             elif isinstance(widget, QSpinBox) or isinstance(widget, QDoubleSpinBox):
                 value = widget.value()
+            elif isinstance(widget, QCheckBox):
+                value = widget.isChecked()
+            elif isinstance(widget, QComboBox):
+                value = widget.currentText()
             else:
                 value = widget.text()
             self.task_config[idx]["params"][pname] = value

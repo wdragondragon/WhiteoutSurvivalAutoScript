@@ -24,6 +24,30 @@ class EmulatorManager:
         self.adb_path = adb_path
         self.ldconsole_path = ldconsole_path
 
+    def start_emulator(self, index):
+        try:
+            subprocess.Popen(
+                [self.ldconsole_path, "launch", "--index", str(index)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+            return True
+        except OSError:
+            return False
+
+    def stop_emulator(self, index):
+        try:
+            result = subprocess.run(
+                [self.ldconsole_path, "quit", "--index", str(index)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                creationflags=subprocess.CREATE_NO_WINDOW
+            )
+            return result.returncode == 0
+        except OSError:
+            return False
+
     def get_running_indices(self):
         result = subprocess.run([self.ldconsole_path, "list2"], capture_output=True, text=True,
                                 creationflags=subprocess.CREATE_NO_WINDOW)
