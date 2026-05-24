@@ -1,4 +1,5 @@
 name: 打开联盟
+initial_state: home
 #pre_task:
 #  - 返回主页
 steps:

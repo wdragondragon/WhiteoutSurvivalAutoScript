@@ -3,6 +3,8 @@ import json
 import os
 import threading
 
+from execution_config import normalize_emulator_settings, normalize_execution_settings
+
 # 修改为你的雷电模拟器路径
 ADB_PATH = r"E:\leidian\LDPlayer9\adb.exe"
 
@@ -53,6 +55,30 @@ class ConfigManager:
         if "emulator_bindings" not in self.config:
             self.config["emulator_bindings"] = {}
         self.config.get("emulator_bindings")[emulator_name] = config_name
+
+    def get_execution_settings(self):
+        return normalize_execution_settings(self.config)
+
+    def set_execution_settings(self, settings):
+        normalized = normalize_execution_settings(settings)
+        self.config.update(normalized)
+
+    def get_emulator_settings(self, emulator_name):
+        settings_map = self.config.get("emulator_settings", {})
+        return normalize_emulator_settings(settings_map.get(emulator_name, {}))
+
+    def set_emulator_settings(self, emulator_name, settings):
+        if "emulator_settings" not in self.config:
+            self.config["emulator_settings"] = {}
+        self.config["emulator_settings"][emulator_name] = normalize_emulator_settings(settings)
+
+    def get_emulator_shuffle_tasks(self, emulator_name):
+        return self.get_emulator_settings(emulator_name).get("shuffle_tasks", False)
+
+    def set_emulator_shuffle_tasks(self, emulator_name, enabled):
+        settings = self.get_emulator_settings(emulator_name)
+        settings["shuffle_tasks"] = bool(enabled)
+        self.set_emulator_settings(emulator_name, settings)
 
 
 class TaskConfigManager:

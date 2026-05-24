@@ -180,7 +180,7 @@ def _build_gather_param_defs():
     return param_defs
 
 
-@register_task("自动挖矿", param_defs=_build_gather_param_defs())
+@register_task("自动挖矿", param_defs=_build_gather_param_defs(), initial_state="wild")
 def auto_gather_resources(executor, params):
     queues = _gather_queue_configs(params)
     max_attempts = _int_param(params, "max_search_attempts", 1, minimum=1)

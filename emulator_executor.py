@@ -13,16 +13,33 @@ import log_util
 
 
 class EmulatorExecutor:
-    def __init__(self, adb_path, name, device_name):
+    def __init__(self, adb_path, name, device_name, action_gate=None, before_input_action=None):
         self.adb_path = adb_path
         self.name = name
         self.device_name = device_name
+        self.action_gate = action_gate
+        self.before_input_action = before_input_action
+        self._in_before_input_action = False
 
     def _run_adb(self, cmd_args):
         full_cmd = [self.adb_path, "-s", self.device_name] + cmd_args
         result = subprocess.run(full_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                 creationflags=subprocess.CREATE_NO_WINDOW)
         return result.stdout.decode(errors="ignore")
+
+    def _before_input(self, action_name):
+        if self._in_before_input_action:
+            if self.action_gate:
+                self.action_gate.wait_before_action(self.name, action_name)
+            return
+        self._in_before_input_action = True
+        try:
+            if self.before_input_action:
+                self.before_input_action(action_name)
+        finally:
+            self._in_before_input_action = False
+        if self.action_gate:
+            self.action_gate.wait_before_action(self.name, action_name)
 
     def screenshot(self, retries=3, retry_interval=0.2):
         last_error = None
@@ -47,24 +64,30 @@ class EmulatorExecutor:
         raise RuntimeError(f"ADB 截图失败: {last_error}")
 
     def click(self, x, y):
+        self._before_input("click")
         self._run_adb(["shell", "input", "tap", str(x), str(y)])
 
     def swipe(self, x1, y1, x2, y2, duration_ms=300):
+        self._before_input("swipe")
         self._run_adb([
             "shell", "input", "swipe",
             str(x1), str(y1), str(x2), str(y2), str(duration_ms)
         ])
 
     def press_back(self):
+        self._before_input("press_back")
         self._run_adb(["shell", "input", "keyevent", "4"])
 
     def input_text(self, text):
+        self._before_input("input_text")
         escaped = str(text).replace(" ", "%s")
         self._run_adb(["shell", "input", "text", escaped])
 
     def clear_text(self, count=6):
+        self._before_input("clear_text_move_end")
         self._run_adb(["shell", "input", "keyevent", "123"])
         for _ in range(count):
+            self._before_input("clear_text_delete")
             self._run_adb(["shell", "input", "keyevent", "67"])
 
     def get_screen_size(self):

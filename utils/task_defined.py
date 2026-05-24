@@ -32,6 +32,7 @@ def load_yaml_tasks(tasks_dir="tasks"):
         task_name = data["name"]
         pre_task = data.get("pre_task", [])
         param_defs = data.get("param_defs", [])
+        initial_state = data.get("initial_state", "wild")
 
         # 动态创建任务函数
         def make_task(steps):
@@ -64,7 +65,12 @@ def load_yaml_tasks(tasks_dir="tasks"):
             return task_func
 
         # 注册任务
-        register_task(task_name, pre_task=pre_task, param_defs=param_defs)(make_task(data.get("steps", [])))
+        register_task(
+            task_name,
+            pre_task=pre_task,
+            param_defs=param_defs,
+            initial_state=initial_state,
+        )(make_task(data.get("steps", [])))
         log_util.log.print(f"[YAML注册] 已注册任务: {task_name}")
 
 

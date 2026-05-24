@@ -1,21 +1,20 @@
 # simulator_ui.py
-from PyQt5.QtCore import QTimer, Qt, pyqtSignal, QThread
+from PyQt5.QtCore import QTimer, Qt, pyqtSignal
 from PyQt5.QtGui import QIcon, QPixmap, QPainter, QColor
 from PyQt5.QtWidgets import (
     QWidget, QListWidget, QPushButton, QHBoxLayout, QVBoxLayout,
-    QLabel, QComboBox, QTabWidget, QTextEdit, QTableWidget, QHeaderView, QTableWidgetItem, QCheckBox
+    QLabel, QComboBox, QTabWidget, QTextEdit, QTableWidget, QHeaderView, QCheckBox,
+    QFormLayout, QSpinBox, QDoubleSpinBox
 )
 
-import config_manager
 import log_util
 from TaskConfigEditor import TaskConfigEditor
 from component.EmulatorCellWidget import EmulatorCellWidget
 from component.EmulatorComboBoxWidget import EmulatorComboBoxWidget
 from config_manager import TaskConfigManager, ADB_PATH, LDCONSOLE_PATH, ConfigManager
-from emulator_executor import EmulatorExecutor
+from execution_scheduler import BatchExecutionThread
 from log_util import Log
 from simulator_manager import EmulatorManager
-from task_runtime import TaskExecutor
 
 
 def create_status_icon(color, size):
@@ -30,40 +29,6 @@ def create_status_icon(color, size):
     return QIcon(pixmap)
 
 
-class TaskThread(QThread):
-    log_signal = pyqtSignal(str)
-    finished_signal = pyqtSignal(str)
-
-    def __init__(self, emulator, task_config, adb_path):
-        super().__init__()
-        self.emulator = emulator
-        self.task_config = task_config
-        self.adb_path = adb_path
-        self._is_running = True
-        self.task_executor: TaskExecutor = None
-
-    def run(self):
-        if not self.emulator.is_running():
-            self.log_signal.emit(f"⚠️ 模拟器 {self.emulator.name} 未运行，跳过")
-            self.finished_signal.emit(self.emulator.name)
-            return
-
-        executor = EmulatorExecutor(config_manager.ADB_PATH, self.emulator.name, self.emulator.device_name)
-        self.task_executor = TaskExecutor(emulator_executor=executor)
-
-        while self._is_running:
-            self.task_executor.execute_task_config(self.task_config)
-            self.log_signal.emit(f"✅ {self.emulator.name} 执行完毕，3秒后再次执行")
-            self.sleep(3)
-
-        self.finished_signal.emit(self.emulator.name)
-
-    def stop(self):
-        self._is_running = False
-        if self.task_executor:
-            self.task_executor.close()
-
-
 class EmulatorSelector(QWidget):
     log_pyqt_signal = pyqtSignal(str)
 
@@ -72,7 +37,7 @@ class EmulatorSelector(QWidget):
         self.setWindowTitle("模拟器选择器")
         self.resize(800, 400)
         log_util.log = Log(self.log_pyqt_signal)
-        self.threads: dict[str:TaskThread] = {}
+        self.scheduler_thread: BatchExecutionThread = None
         self.is_running = False
         self.config_mgr: ConfigManager = config_mgr
         self.task_config_manager: TaskConfigManager = TaskConfigManager()
@@ -129,8 +94,8 @@ class EmulatorSelector(QWidget):
         self.log_text.setReadOnly(True)
         self.log_pyqt_signal.connect(self.log_text.append)
 
-        self.table = QTableWidget(0, 2)
-        self.table.setHorizontalHeaderLabels(["模拟器", "绑定配置"])
+        self.table = QTableWidget(0, 3)
+        self.table.setHorizontalHeaderLabels(["模拟器", "绑定配置", "乱序执行"])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -142,9 +107,12 @@ class EmulatorSelector(QWidget):
         self.emulator_table_tab = QWidget()
         self.emulator_table_tab.setLayout(self.table_layout)
 
+        self.execution_settings_tab = self._create_execution_settings_tab()
+
         self.tab_widget = QTabWidget()
         self.tab_widget.addTab(self.emulator_table_tab, "模拟器列表")
         self.tab_widget.addTab(self.config_tab, "配置")
+        self.tab_widget.addTab(self.execution_settings_tab, "执行设置")
         self.tab_widget.addTab(self.log_text, "日志")
 
         layout = QVBoxLayout()
@@ -167,6 +135,101 @@ class EmulatorSelector(QWidget):
         self.refresh_emulators()
         self.refresh_config_file_list()
         self.load_config_from_file(self.config_name_combo.currentText())
+        self.load_execution_settings()
+
+    def _create_execution_settings_tab(self):
+        tab = QWidget()
+        layout = QFormLayout()
+
+        self.batch_enabled_checkbox = QCheckBox()
+        self.batch_size_spin = QSpinBox()
+        self.batch_size_spin.setRange(1, 99)
+
+        self.serial_actions_enabled_checkbox = QCheckBox()
+        self.serial_interval_spin = QDoubleSpinBox()
+        self.serial_interval_spin.setRange(0.0, 60.0)
+        self.serial_interval_spin.setDecimals(2)
+        self.serial_interval_spin.setSingleStep(0.1)
+
+        self.relogin_interval_spin = QDoubleSpinBox()
+        self.relogin_interval_spin.setRange(0.0, 600.0)
+        self.relogin_interval_spin.setDecimals(1)
+        self.relogin_interval_spin.setSingleStep(1.0)
+
+        self.batch_start_timeout_spin = QSpinBox()
+        self.batch_start_timeout_spin.setRange(1, 3600)
+
+        self.batch_between_delay_spin = QDoubleSpinBox()
+        self.batch_between_delay_spin.setRange(0.0, 600.0)
+        self.batch_between_delay_spin.setDecimals(1)
+        self.batch_between_delay_spin.setSingleStep(1.0)
+
+        layout.addRow("启用分批执行", self.batch_enabled_checkbox)
+        layout.addRow("每批多开数量", self.batch_size_spin)
+        layout.addRow("启用模拟器间串行操作", self.serial_actions_enabled_checkbox)
+        layout.addRow("操作间隔/秒", self.serial_interval_spin)
+        layout.addRow("被顶号重登等待/秒", self.relogin_interval_spin)
+        layout.addRow("批次启动超时/秒", self.batch_start_timeout_spin)
+        layout.addRow("批次间隔/秒", self.batch_between_delay_spin)
+
+        for widget in (
+                self.batch_enabled_checkbox,
+                self.serial_actions_enabled_checkbox,
+        ):
+            widget.stateChanged.connect(self.save_execution_settings)
+        for widget in (
+                self.batch_size_spin,
+                self.serial_interval_spin,
+                self.relogin_interval_spin,
+                self.batch_start_timeout_spin,
+                self.batch_between_delay_spin,
+        ):
+            widget.valueChanged.connect(self.save_execution_settings)
+
+        tab.setLayout(layout)
+        return tab
+
+    def load_execution_settings(self):
+        settings = self.config_mgr.get_execution_settings()
+        widgets = [
+            self.batch_enabled_checkbox,
+            self.batch_size_spin,
+            self.serial_actions_enabled_checkbox,
+            self.serial_interval_spin,
+            self.relogin_interval_spin,
+            self.batch_start_timeout_spin,
+            self.batch_between_delay_spin,
+        ]
+        for widget in widgets:
+            widget.blockSignals(True)
+        try:
+            self.batch_enabled_checkbox.setChecked(settings["batch_enabled"])
+            self.batch_size_spin.setValue(settings["batch_size"])
+            self.serial_actions_enabled_checkbox.setChecked(settings["serial_actions_enabled"])
+            self.serial_interval_spin.setValue(settings["serial_action_interval_sec"])
+            self.relogin_interval_spin.setValue(settings["relogin_interval_sec"])
+            self.batch_start_timeout_spin.setValue(settings["batch_start_timeout_sec"])
+            self.batch_between_delay_spin.setValue(settings["batch_between_delay_sec"])
+        finally:
+            for widget in widgets:
+                widget.blockSignals(False)
+
+    def get_execution_settings_from_ui(self):
+        return {
+            "batch_enabled": self.batch_enabled_checkbox.isChecked(),
+            "batch_size": self.batch_size_spin.value(),
+            "batch_cycle_mode": "loop",
+            "serial_actions_enabled": self.serial_actions_enabled_checkbox.isChecked(),
+            "serial_action_interval_sec": self.serial_interval_spin.value(),
+            "relogin_interval_sec": self.relogin_interval_spin.value(),
+            "batch_start_timeout_sec": self.batch_start_timeout_spin.value(),
+            "batch_between_delay_sec": self.batch_between_delay_spin.value(),
+        }
+
+    def save_execution_settings(self):
+        if not hasattr(self, "batch_enabled_checkbox"):
+            return
+        self.config_mgr.set_execution_settings(self.get_execution_settings_from_ui())
 
     def load_config_from_file(self, config_name):
         if config_name:
@@ -223,6 +286,12 @@ class EmulatorSelector(QWidget):
 
             self.table.setCellWidget(row, 0, emulator_item)
             self.table.setCellWidget(row, 1, config_combo_item)
+            shuffle_checkbox = QCheckBox()
+            shuffle_checkbox.setChecked(self.config_mgr.get_emulator_shuffle_tasks(emu.name))
+            shuffle_checkbox.stateChanged.connect(
+                lambda state, name=emu.name: self.on_shuffle_tasks_changed(name, state == Qt.Checked)
+            )
+            self.table.setCellWidget(row, 2, shuffle_checkbox)
 
         self.update_selected_emulators()
 
@@ -269,6 +338,10 @@ class EmulatorSelector(QWidget):
     def on_bind_config_combo_changed(self, emu_name: str, config_name: str):
         log_util.log.print(f"配置绑定[{emu_name}]->[{config_name}]")
         self.config_mgr.set_emulator_bindings(emu_name, config_name)
+
+    def on_shuffle_tasks_changed(self, emu_name: str, enabled: bool):
+        log_util.log.print(f"乱序执行[{emu_name}]->[{enabled}]")
+        self.config_mgr.set_emulator_shuffle_tasks(emu_name, enabled)
 
     def iter_checked_items(self):
         for i in range(self.list_widget.count()):
@@ -341,8 +414,6 @@ class EmulatorSelector(QWidget):
             if not emulator:
                 log_util.log.print(f"[关闭模拟器] 未找到 {name}")
                 continue
-            if name in self.threads:
-                self.threads[name].stop()
             if not emulator.is_running():
                 log_util.log.print(f"[关闭模拟器] {name} 未运行，跳过")
                 continue
@@ -355,30 +426,6 @@ class EmulatorSelector(QWidget):
         self.status_label.setText(f"已发送关闭命令：{stopped_count} 个模拟器")
         QTimer.singleShot(1000, self.refresh_emulators)
         QTimer.singleShot(3000, self.refresh_emulators)
-
-    def start_execution(self):
-        if not self.selected_emulators:
-            self.status_label.setText("⚠️ 请先选择要执行的模拟器")
-            return
-
-        self.status_label.setText("▶️ 任务进行中...")
-        for name in self.selected_emulators:
-            emulator = next((e for e in self.manager.get_all_emulators() if e.name == name), None)
-            if not emulator:
-                continue
-
-            if not emulator.is_running():
-                log_util.log.print(f"{emulator.name}未运行，跳过执行")
-                continue
-            emulator_executor: EmulatorExecutor = EmulatorExecutor(config_manager.ADB_PATH,
-                                                                   emulator.name,
-                                                                   emulator.device_name)
-            executor: TaskExecutor = TaskExecutor(emulator_executor=emulator_executor)
-            task_config_name = self.config_mgr.get_emulator_bindings(name)
-            print(f"运行{name}->{task_config_name}")
-            task_config = self.task_config_manager.load_config_from_file(task_config_name)
-            executor.execute_task_config(task_config)
-        self.status_label.setText("✔️ 任务完成")
 
     def toggle_execution(self):
         if not self.is_running:
@@ -393,37 +440,48 @@ class EmulatorSelector(QWidget):
         self.is_running = True
         self.start_button.setText("停止执行")
         self.status_label.setText("▶️ 正在执行任务...")
-        for name in self.selected_emulators:
-            emulator = next((e for e in self.manager.get_all_emulators() if e.name == name), None)
-            if not emulator:
-                continue
+
+        selected_names = self.get_selected_emulator_names_in_table_order()
+        execution_settings = self.get_execution_settings_from_ui()
+        self.config_mgr.set_execution_settings(execution_settings)
+
+        task_configs = {}
+        emulator_settings = {}
+        for name in selected_names:
             task_config_name = self.config_mgr.get_emulator_bindings(name)
             if not task_config_name and self.config_name_combo.size() != 0:
                 task_config_name = self.config_name_combo.currentText()
-            log_util.log.print(f"[启动{name}]->配置[{task_config_name}]")
+            log_util.log.print(f"[调度{name}]->配置[{task_config_name}]")
             task_config = self.task_config_manager.load_config_from_file(task_config_name)
-            thread = TaskThread(emulator, task_config, config_manager.ADB_PATH)
-            thread.log_signal.connect(log_util.log.print)
-            thread.finished_signal.connect(self.thread_finished)
-            self.threads[name] = thread
-            thread.start()
+            task_configs[name] = task_config
+            emulator_settings[name] = self.config_mgr.get_emulator_settings(name)
+
+        self.scheduler_thread = BatchExecutionThread(
+            selected_names=selected_names,
+            task_configs=task_configs,
+            emulator_settings=emulator_settings,
+            execution_settings=execution_settings,
+            adb_path=self.config_mgr.get("adb_path", ADB_PATH),
+            ldconsole_path=self.config_mgr.get("ldconsole_path", LDCONSOLE_PATH),
+            fallback_config_name=self.config_name_combo.currentText(),
+        )
+        self.scheduler_thread.log_signal.connect(log_util.log.print)
+        self.scheduler_thread.finished_signal.connect(self.scheduler_finished)
+        self.scheduler_thread.start()
 
     def stop_tasks(self):
         self.status_label.setText("⏹️ 正在停止任务...")
         self.start_button.setText("开始执行")
         self.is_running = False
-        for name, thread in self.threads.items():
-            thread.stop()
-        self.threads.clear()
+        if self.scheduler_thread:
+            self.scheduler_thread.stop()
 
-    def thread_finished(self, name):
-        log_util.log.print(f"🛑 {name} 线程已停止")
-        self.threads.pop(name, None)
-
-        if not self.threads:
-            self.status_label.setText("✅ 所有任务线程已完成")
-            self.start_button.setText("开始执行")
-            self.is_running = False
+    def scheduler_finished(self):
+        log_util.log.print("调度线程已停止")
+        self.scheduler_thread = None
+        self.status_label.setText("所有任务线程已完成")
+        self.start_button.setText("开始执行")
+        self.is_running = False
 
     def get_selected_emulators(self):
         return list(self.selected_emulators)

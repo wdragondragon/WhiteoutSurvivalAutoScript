@@ -149,7 +149,7 @@ def _start_rally_and_open_formation(executor, duration_minutes):
     {"name": "use_stamina_can", "type": "bool", "default": False, "desc": "体力不足是否使用背包体力罐头"},
     {"name": "stamina_can_reserve_count", "type": "int", "default": 0, "desc": "背包体力罐头保留数量"},
     {"name": "use_diamond_for_stamina", "type": "bool", "default": False, "desc": "体力不足是否允许钻石购买"},
-])
+], initial_state="wild")
 def rally_icefield_beast(executor, params):
     level = _int_param(params, "beast_level", 1, minimum=1)
     formation_indices = _formation_indices_param(params)

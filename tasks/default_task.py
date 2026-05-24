@@ -6,7 +6,7 @@ from task_runtime import register_task, TaskExecutor
 from TaskStatus import TaskStatus
 
 
-@register_task("自动打开游戏", param_defs=[])
+@register_task("自动打开游戏", param_defs=[], initial_state="any")
 def check_open(executor: TaskExecutor, params):
     x, y, find = executor.emulator_executor.find_img("buttons/button1.png")
     if find:
@@ -18,7 +18,7 @@ def check_open(executor: TaskExecutor, params):
 
 @register_task("重新登录", param_defs=[{
     "name": "interval", "type": "int", "default": 0, "desc": "重上等待时间/秒"
-}])
+}], initial_state="any")
 def re_login(executor: TaskExecutor, params):
     x, y, find = executor.emulator_executor.find_img("buttons/relogin.png")
     if find:
@@ -31,7 +31,7 @@ def re_login(executor: TaskExecutor, params):
     return TaskStatus.NOT_STARTED
 
 
-@register_task("返回主页", pre_task=["自动打开游戏", "重新登录"])
+@register_task("返回主页", pre_task=["自动打开游戏", "重新登录"], initial_state="any")
 def back_home(executor: TaskExecutor, params):
     back_image_path = ["buttons/back.png", "buttons/back2.png", "buttons/back3.png", "buttons/back4.png",
                        "buttons/back5.png"]
@@ -60,7 +60,7 @@ def back_home(executor: TaskExecutor, params):
 #     return TaskStatus.NOT_STARTED
 
 
-@register_task("建棋", pre_task=["打开联盟"])
+@register_task("建棋", pre_task=["打开联盟"], initial_state="home")
 def click_lm(executor: TaskExecutor, params):
     event_util.multiple_clicks(executor, [
         ("buttons/lmld.png", "进入联盟领地"),
@@ -73,7 +73,7 @@ def click_lm(executor: TaskExecutor, params):
     return TaskStatus.SUCCESS
 
 
-@register_task("自动洗练")
+@register_task("自动洗练", initial_state="manual")
 def pet_page(executor: TaskExecutor, params):
     region = (290, 225, 324, 250)
     i = 0

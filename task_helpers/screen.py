@@ -46,6 +46,8 @@ def _existing_templates(*paths):
 def _sleep_while_running(executor, seconds):
     end_time = time.time() + seconds
     while executor.run_status and time.time() < end_time:
+        if hasattr(executor, "check_session_checkpoint"):
+            executor.check_session_checkpoint()
         time.sleep(min(0.2, end_time - time.time()))
 
 
