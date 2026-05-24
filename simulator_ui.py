@@ -15,7 +15,7 @@ from config_manager import TaskConfigManager, ADB_PATH, LDCONSOLE_PATH, ConfigMa
 from emulator_executor import EmulatorExecutor
 from log_util import Log
 from simulator_manager import EmulatorManager
-from task_executor import TaskExecutor
+from task_runtime import TaskExecutor
 
 
 def create_status_icon(color, size):
@@ -373,11 +373,11 @@ class EmulatorSelector(QWidget):
             emulator_executor: EmulatorExecutor = EmulatorExecutor(config_manager.ADB_PATH,
                                                                    emulator.name,
                                                                    emulator.device_name)
-            task_executor: TaskExecutor = TaskExecutor(emulator_executor=emulator_executor)
+            executor: TaskExecutor = TaskExecutor(emulator_executor=emulator_executor)
             task_config_name = self.config_mgr.get_emulator_bindings(name)
             print(f"运行{name}->{task_config_name}")
             task_config = self.task_config_manager.load_config_from_file(task_config_name)
-            task_executor.execute_task_config(task_config)
+            executor.execute_task_config(task_config)
         self.status_label.setText("✔️ 任务完成")
 
     def toggle_execution(self):

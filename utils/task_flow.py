@@ -1,6 +1,7 @@
 
 import time
 import log_util
+from StepStatus import StepStatus
 from TaskStatus import TaskStatus
 
 
@@ -23,9 +24,14 @@ class TaskStep:
         for attempt in range(self.retry):
             try:
                 result = self.action()
-                if isinstance(result, TaskStatus):
-                    if result == TaskStatus.SUCCESS:
+                if isinstance(result, (TaskStatus, StepStatus)):
+                    if result in (TaskStatus.SUCCESS, StepStatus.SUCCESS):
                         return TaskStatus.SUCCESS
+                    continue
+                if result is False:
+                    continue
+                if result is True:
+                    return TaskStatus.SUCCESS
                 elif result:
                     return TaskStatus.SUCCESS
             except Exception as e:

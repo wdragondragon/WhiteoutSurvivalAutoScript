@@ -3,7 +3,7 @@ from PyQt5.QtWidgets import (
     QFormLayout, QLineEdit, QLabel, QSpinBox, QDoubleSpinBox, QMessageBox, QCheckBox, QComboBox
 )
 
-from task_executor import TASK_REGISTRY
+from task_runtime import TASK_REGISTRY
 
 
 class TaskConfigEditor(QWidget):
@@ -190,7 +190,7 @@ class TaskConfigEditor(QWidget):
 if __name__ == '__main__':
     import sys
     from PyQt5.QtWidgets import QApplication
-    from task_executor import TaskExecutor
+    from task_runtime import TaskExecutor
 
     app = QApplication(sys.argv)
     executor = TaskExecutor("模拟器1")

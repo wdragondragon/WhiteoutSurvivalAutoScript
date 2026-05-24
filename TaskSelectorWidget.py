@@ -4,7 +4,7 @@ from PyQt5.QtWidgets import (
     QPushButton, QComboBox, QMessageBox, QScrollArea, QCheckBox
 )
 
-from task_executor import TASK_REGISTRY
+from task_runtime import TASK_REGISTRY
 
 
 class TaskSelectorWidget(QWidget):

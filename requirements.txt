@@ -1,0 +1,6 @@
+# Runtime dependencies
+PyQt5==5.15.11
+numpy==2.2.5
+opencv-python==4.11.0.86
+PyYAML>=6.0
+pytesseract>=0.3.10

@@ -3,9 +3,8 @@ import os
 import yaml
 
 import log_util
-import task_executor
 from event_util import click_img
-from task_executor import TaskExecutor, register_task
+from task_runtime import TASK_REGISTRY, TaskExecutor, register_task
 from utils.task_flow import TaskFlow
 import importlib
 import pkgutil
@@ -84,7 +83,7 @@ def load_all_tasks(tasks_pkg_name="tasks"):
             importlib.import_module(module_info.name)
         load_yaml_tasks()
         # 自动加载所有 YAML 任务
-        log_util.log.print(f"已加载所有任务模块，共 {len(task_executor.TASK_REGISTRY)} 个任务")
+        log_util.log.print(f"已加载所有任务模块，共 {len(TASK_REGISTRY)} 个任务")
     except ModuleNotFoundError:
         log_util.log.print(f"未找到任务目录：{tasks_pkg_name}")
     except Exception as e:

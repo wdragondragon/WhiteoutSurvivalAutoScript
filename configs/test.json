@@ -1,0 +1,20 @@
+{
+  "name": "test",
+  "tasks": [
+    {
+      "name": "自动集结冰原巨兽",
+      "params": {
+        "beast_level": 8,
+        "formation_index": 8,
+        "rally_duration_minutes": 5,
+        "max_search_attempts": 1,
+        "search_retry_interval_sec": 3,
+        "use_stamina_can": true,
+        "stamina_can_reserve_count": 200,
+        "use_diamond_for_stamina": false,
+        "formation_indices": "8",
+        "require_hero_for_march": true
+      }
+    }
+  ]
+}

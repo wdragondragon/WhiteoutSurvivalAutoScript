@@ -4,9 +4,9 @@ import os
 import threading
 
 # 修改为你的雷电模拟器路径
-ADB_PATH = r"C:\leidian\LDPlayer9\adb.exe"
+ADB_PATH = r"E:\leidian\LDPlayer9\adb.exe"
 
-LDCONSOLE_PATH = r"C:\leidian\LDPlayer9\ldconsole.exe"
+LDCONSOLE_PATH = r"E:\leidian\LDPlayer9\ldconsole.exe"
 
 # 模板匹配阈值（0~1）
 MATCH_THRESHOLD = 0.85

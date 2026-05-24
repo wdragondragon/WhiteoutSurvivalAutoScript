@@ -2,7 +2,7 @@ import time
 
 import log_util
 from StepStatus import StepStatus
-from task_executor import TaskExecutor
+from task_runtime import TaskExecutor
 
 
 def click_img(executor: TaskExecutor, img_path, desc):
@@ -10,8 +10,8 @@ def click_img(executor: TaskExecutor, img_path, desc):
     if find:
         log_util.log.print(f"[{executor.emulator_name}] {desc}")
         executor.emulator_executor.click(x, y)
-        return StepStatus.FAILED
-    return StepStatus.SUCCESS
+        return StepStatus.SUCCESS
+    return StepStatus.FAILED
 
 
 def multiple_clicks(
