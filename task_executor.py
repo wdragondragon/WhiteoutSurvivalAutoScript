@@ -1,10 +1,14 @@
 import os
+# emulator_executor.py
+import importlib
+import pkgutil
 import time
 
 import cv2
 import numpy as np
 
 import log_util
+from TaskStatus import TaskStatus
 from emulator_executor import EmulatorExecutor
 
 TASK_REGISTRY = {}
@@ -117,6 +121,8 @@ def register_task(name, param_defs=None, pre_task=None, after_task=None):
                         else:
                             executor.execute_task(task, {})
                 result = func(*args, **kwargs)
+                if result == TaskStatus.SUCCESS:
+                    time.sleep(1)
                 if after_task:
                     for task in after_task:
                         if type(task) == dict:
@@ -172,7 +178,7 @@ class TaskExecutor:
         for task in task_config.get("tasks", []):
             name = task["name"]
             params = task.get("params", {})
-            if not self.execute_task(name, params):
+            if self.execute_task(name, params) == TaskStatus.FAILED:
                 log_util.log.print(f"任务 {name} 执行失败，停止后续任务")
                 break
 

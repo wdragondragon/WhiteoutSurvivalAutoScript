@@ -1,0 +1,47 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Task YAML Schema",
+  "type": "object",
+  "properties": {
+    "name": { "type": "string" },
+    "pre_task": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "param_defs":{
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "type": { "type": "string" },
+          "desc": { "type": "string" },
+          "default": {
+            "oneOf": [
+              { "type": "string" },
+              { "type": "integer" }
+            ]
+          }
+        }
+      },
+      "required": ["name", "type", "desc", "default"]
+    },
+    "steps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "action": { "type": "string" },
+          "img_path": { "type": "string" },
+          "desc": { "type": "string" },
+          "retry": { "type": "integer" }
+        },
+        "required": ["name", "action"],
+        "additionalProperties": true
+      }
+    }
+  },
+  "required": ["name", "steps"],
+  "additionalProperties": false
+}

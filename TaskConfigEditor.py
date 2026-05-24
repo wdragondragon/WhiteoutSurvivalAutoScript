@@ -125,6 +125,11 @@ class TaskConfigEditor(QWidget):
                     widget.addItem(option)
                 if str(default) in param_def.get("options", []):
                     widget.setCurrentText(str(default))
+            elif ptype == "enum":
+                widget = QComboBox()
+                for v in param_def["options"]:
+                    widget.addItem(v)
+                widget.setCurrentText(default)
             else:
                 widget = QLineEdit(str(default))
 
