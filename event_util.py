@@ -34,6 +34,8 @@ def multiple_clicks(
     :param on_timeout: 超时回调函数，接收参数 (executor, image_path, desc)
     :return: TaskStatus.SUCCESS / TaskStatus.FAILED
     """
+    click_timeout = max(0.0, click_timeout)
+    check_interval = max(0.0, check_interval)
     for image, desc in images:
         # 1. 等待图片出现
         start_time = time.time()
@@ -76,6 +78,8 @@ def wait_until(func, interval=1, timeout=30):
     :param timeout: 最大等待时长（秒）
     :return: True（成功） 或 False（超时）
     """
+    interval = max(0.0, interval)
+    timeout = max(0.0, timeout)
     start = time.time()
     while True:
         try:

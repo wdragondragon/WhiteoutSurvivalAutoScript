@@ -1,5 +1,5 @@
 {
-  "name": "test",
+  "shuffle_tasks": true,
   "tasks": [
     {
       "name": "自动集结冰原巨兽",
@@ -15,6 +15,40 @@
         "formation_indices": "8",
         "require_hero_for_march": true
       }
+    },
+    {
+      "name": "自动挖矿",
+      "params": {
+        "max_search_attempts": 1,
+        "search_retry_interval_sec": 3,
+        "keep_only_blue_gather_heroes": true,
+        "require_first_hero_for_gather": false,
+        "queue1_enabled": true,
+        "queue1_resource_type": "生肉",
+        "queue1_resource_level": 8,
+        "queue1_full_only": true,
+        "queue2_enabled": true,
+        "queue2_resource_type": "木材",
+        "queue2_resource_level": 8,
+        "queue2_full_only": true,
+        "queue3_enabled": true,
+        "queue3_resource_type": "煤矿",
+        "queue3_resource_level": 8,
+        "queue3_full_only": true,
+        "queue4_enabled": true,
+        "queue4_resource_type": "铁矿",
+        "queue4_resource_level": 8,
+        "queue4_full_only": true,
+        "queue5_enabled": true,
+        "queue5_resource_type": "木材",
+        "queue5_resource_level": 8,
+        "queue5_full_only": true,
+        "queue6_enabled": true,
+        "queue6_resource_type": "木材",
+        "queue6_resource_level": 8,
+        "queue6_full_only": true
+      }
     }
-  ]
+  ],
+  "name": "test"
 }

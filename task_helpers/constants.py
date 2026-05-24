@@ -1,8 +1,8 @@
-import os
+from app_paths import resource_path
 
-BEAST_RALLY_ASSET_DIR = os.path.join("buttons", "beast_rally")
-GATHER_ASSET_DIR = os.path.join("buttons", "gather")
-MARCH_QUEUE_ASSET_DIR = os.path.join("buttons", "march_queue")
+BEAST_RALLY_ASSET_DIR = resource_path("buttons", "beast_rally")
+GATHER_ASSET_DIR = resource_path("buttons", "gather")
+MARCH_QUEUE_ASSET_DIR = resource_path("buttons", "march_queue")
 BASE_SCREEN_WIDTH = 450
 BASE_SCREEN_HEIGHT = 800
 MARCH_SAME_TARGET = "same_target"

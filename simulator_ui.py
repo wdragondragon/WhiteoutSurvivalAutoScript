@@ -1,10 +1,12 @@
 # simulator_ui.py
+import os
+
 from PyQt5.QtCore import QTimer, Qt, pyqtSignal
 from PyQt5.QtGui import QIcon, QPixmap, QPainter, QColor
 from PyQt5.QtWidgets import (
     QWidget, QListWidget, QPushButton, QHBoxLayout, QVBoxLayout,
     QLabel, QComboBox, QTabWidget, QTextEdit, QTableWidget, QHeaderView, QCheckBox,
-    QFormLayout, QSpinBox, QDoubleSpinBox
+    QFormLayout, QSpinBox, QDoubleSpinBox, QTableWidgetItem, QLineEdit, QFileDialog
 )
 
 import log_util
@@ -39,6 +41,7 @@ class EmulatorSelector(QWidget):
         log_util.log = Log(self.log_pyqt_signal)
         self.scheduler_thread: BatchExecutionThread = None
         self.is_running = False
+        self.current_task_status_by_emulator = {}
         self.config_mgr: ConfigManager = config_mgr
         self.task_config_manager: TaskConfigManager = TaskConfigManager()
 
@@ -95,7 +98,7 @@ class EmulatorSelector(QWidget):
         self.log_pyqt_signal.connect(self.log_text.append)
 
         self.table = QTableWidget(0, 3)
-        self.table.setHorizontalHeaderLabels(["模拟器", "绑定配置", "乱序执行"])
+        self.table.setHorizontalHeaderLabels(["模拟器", "绑定配置", "当前任务"])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -107,11 +110,13 @@ class EmulatorSelector(QWidget):
         self.emulator_table_tab = QWidget()
         self.emulator_table_tab.setLayout(self.table_layout)
 
+        self.emulator_path_tab = self._create_emulator_path_tab()
         self.execution_settings_tab = self._create_execution_settings_tab()
 
         self.tab_widget = QTabWidget()
         self.tab_widget.addTab(self.emulator_table_tab, "模拟器列表")
         self.tab_widget.addTab(self.config_tab, "配置")
+        self.tab_widget.addTab(self.emulator_path_tab, "模拟器路径")
         self.tab_widget.addTab(self.execution_settings_tab, "执行设置")
         self.tab_widget.addTab(self.log_text, "日志")
 
@@ -135,7 +140,43 @@ class EmulatorSelector(QWidget):
         self.refresh_emulators()
         self.refresh_config_file_list()
         self.load_config_from_file(self.config_name_combo.currentText())
+        self.load_emulator_paths()
         self.load_execution_settings()
+
+    def _create_path_picker(self, browse_handler):
+        container = QWidget()
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        line_edit = QLineEdit()
+        browse_button = QPushButton("选择")
+        browse_button.clicked.connect(browse_handler)
+        layout.addWidget(line_edit)
+        layout.addWidget(browse_button)
+        return container, line_edit
+
+    def _create_emulator_path_tab(self):
+        tab = QWidget()
+        layout = QFormLayout()
+
+        ldconsole_picker, self.ldconsole_path_edit = self._create_path_picker(self.browse_ldconsole_path)
+        adb_picker, self.adb_path_edit = self._create_path_picker(self.browse_adb_path)
+        self.ldconsole_path_edit.setPlaceholderText(r"例如: E:\leidian\LDPlayer9\ldconsole.exe")
+        self.adb_path_edit.setPlaceholderText(r"例如: E:\leidian\LDPlayer9\adb.exe")
+        self.pick_ldplayer_dir_button = QPushButton("选择雷电安装目录并自动填充")
+        self.pick_ldplayer_dir_button.clicked.connect(self.browse_ldplayer_dir)
+        self.save_emulator_path_button = QPushButton("保存并刷新模拟器列表")
+        self.save_emulator_path_button.clicked.connect(self.save_emulator_paths)
+
+        self.ldconsole_path_edit.editingFinished.connect(self.save_emulator_paths)
+        self.adb_path_edit.editingFinished.connect(self.save_emulator_paths)
+
+        layout.addRow("ldconsole.exe", ldconsole_picker)
+        layout.addRow("adb.exe", adb_picker)
+        layout.addRow("", self.pick_ldplayer_dir_button)
+        layout.addRow("", self.save_emulator_path_button)
+
+        tab.setLayout(layout)
+        return tab
 
     def _create_execution_settings_tab(self):
         tab = QWidget()
@@ -188,6 +229,88 @@ class EmulatorSelector(QWidget):
 
         tab.setLayout(layout)
         return tab
+
+    def load_emulator_paths(self):
+        widgets = [self.ldconsole_path_edit, self.adb_path_edit]
+        for widget in widgets:
+            widget.blockSignals(True)
+        try:
+            self.ldconsole_path_edit.setText(self.config_mgr.get("ldconsole_path", LDCONSOLE_PATH))
+            self.adb_path_edit.setText(self.config_mgr.get("adb_path", ADB_PATH))
+        finally:
+            for widget in widgets:
+                widget.blockSignals(False)
+
+    def browse_ldconsole_path(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "选择 ldconsole.exe",
+            self.ldconsole_path_edit.text().strip() or LDCONSOLE_PATH,
+            "可执行文件 (*.exe);;所有文件 (*.*)",
+        )
+        if path:
+            self.ldconsole_path_edit.setText(path)
+            self.save_emulator_paths()
+
+    def browse_adb_path(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "选择 adb.exe",
+            self.adb_path_edit.text().strip() or ADB_PATH,
+            "可执行文件 (*.exe);;所有文件 (*.*)",
+        )
+        if path:
+            self.adb_path_edit.setText(path)
+            self.save_emulator_paths()
+
+    def browse_ldplayer_dir(self):
+        current_path = self.ldconsole_path_edit.text().strip() or LDCONSOLE_PATH
+        current_dir = os.path.dirname(current_path) if current_path else ""
+        directory = QFileDialog.getExistingDirectory(self, "选择雷电模拟器安装目录", current_dir)
+        if not directory:
+            return
+
+        ldconsole_path = os.path.join(directory, "ldconsole.exe")
+        adb_path = os.path.join(directory, "adb.exe")
+        self.ldconsole_path_edit.setText(ldconsole_path)
+        self.adb_path_edit.setText(adb_path)
+        self.save_emulator_paths()
+
+    def save_emulator_paths(self):
+        if not hasattr(self, "ldconsole_path_edit"):
+            return
+        if self.is_running:
+            self.status_label.setText("正在执行任务，暂不能修改模拟器路径")
+            self.load_emulator_paths()
+            return
+
+        ldconsole_path = self.ldconsole_path_edit.text().strip()
+        adb_path = self.adb_path_edit.text().strip()
+        if not ldconsole_path:
+            ldconsole_path = LDCONSOLE_PATH
+            self.ldconsole_path_edit.setText(ldconsole_path)
+        if not adb_path:
+            adb_path = ADB_PATH
+            self.adb_path_edit.setText(adb_path)
+
+        missing_paths = []
+        if not os.path.isfile(ldconsole_path):
+            missing_paths.append(f"ldconsole.exe: {ldconsole_path}")
+        if not os.path.isfile(adb_path):
+            missing_paths.append(f"adb.exe: {adb_path}")
+        if missing_paths:
+            message = "模拟器路径不存在，请重新选择: " + "；".join(missing_paths)
+            self.status_label.setText(message)
+            log_util.log.print(message)
+            return
+
+        self.config_mgr.set("ldconsole_path", ldconsole_path)
+        self.config_mgr.set("adb_path", adb_path)
+        self.config_mgr.save()
+        self.manager = EmulatorManager(adb_path, ldconsole_path)
+        self.status_label.setText("模拟器路径已保存")
+        log_util.log.print(f"模拟器路径已保存: ldconsole={ldconsole_path}, adb={adb_path}")
+        self.refresh_emulators()
 
     def load_execution_settings(self):
         settings = self.config_mgr.get_execution_settings()
@@ -286,17 +409,20 @@ class EmulatorSelector(QWidget):
 
             self.table.setCellWidget(row, 0, emulator_item)
             self.table.setCellWidget(row, 1, config_combo_item)
-            shuffle_checkbox = QCheckBox()
-            shuffle_checkbox.setChecked(self.config_mgr.get_emulator_shuffle_tasks(emu.name))
-            shuffle_checkbox.stateChanged.connect(
-                lambda state, name=emu.name: self.on_shuffle_tasks_changed(name, state == Qt.Checked)
-            )
-            self.table.setCellWidget(row, 2, shuffle_checkbox)
+            current_task_item = QTableWidgetItem(self.current_task_status_by_emulator.get(emu.name, ""))
+            current_task_item.setTextAlignment(Qt.AlignCenter)
+            self.table.setItem(row, 2, current_task_item)
 
         self.update_selected_emulators()
 
     def refresh_emulators(self):
-        emulators = self.manager.get_all_emulators()
+        try:
+            emulators = self.manager.get_all_emulators()
+        except Exception as e:
+            message = f"刷新模拟器列表失败，请检查雷电模拟器路径配置: {e}"
+            self.status_label.setText(message)
+            log_util.log.print(message)
+            return
         selected_names = self.selected_emulators.copy()
         emulator_names = [emu.name for emu in emulators]
         current_names = self._current_emulator_row_names()
@@ -339,9 +465,19 @@ class EmulatorSelector(QWidget):
         log_util.log.print(f"配置绑定[{emu_name}]->[{config_name}]")
         self.config_mgr.set_emulator_bindings(emu_name, config_name)
 
-    def on_shuffle_tasks_changed(self, emu_name: str, enabled: bool):
-        log_util.log.print(f"乱序执行[{emu_name}]->[{enabled}]")
-        self.config_mgr.set_emulator_shuffle_tasks(emu_name, enabled)
+    def update_current_task_status(self, emulator_name: str, task_name: str):
+        self.current_task_status_by_emulator[emulator_name] = task_name or ""
+        for row in range(self.table.rowCount()):
+            widget = self.table.cellWidget(row, 0)
+            if not isinstance(widget, EmulatorCellWidget) or widget.get_name() != emulator_name:
+                continue
+            item = self.table.item(row, 2)
+            if item is None:
+                item = QTableWidgetItem()
+                item.setTextAlignment(Qt.AlignCenter)
+                self.table.setItem(row, 2, item)
+            item.setText(task_name or "")
+            break
 
     def iter_checked_items(self):
         for i in range(self.list_widget.count()):
@@ -446,7 +582,6 @@ class EmulatorSelector(QWidget):
         self.config_mgr.set_execution_settings(execution_settings)
 
         task_configs = {}
-        emulator_settings = {}
         for name in selected_names:
             task_config_name = self.config_mgr.get_emulator_bindings(name)
             if not task_config_name and self.config_name_combo.size() != 0:
@@ -454,18 +589,17 @@ class EmulatorSelector(QWidget):
             log_util.log.print(f"[调度{name}]->配置[{task_config_name}]")
             task_config = self.task_config_manager.load_config_from_file(task_config_name)
             task_configs[name] = task_config
-            emulator_settings[name] = self.config_mgr.get_emulator_settings(name)
 
         self.scheduler_thread = BatchExecutionThread(
             selected_names=selected_names,
             task_configs=task_configs,
-            emulator_settings=emulator_settings,
             execution_settings=execution_settings,
             adb_path=self.config_mgr.get("adb_path", ADB_PATH),
             ldconsole_path=self.config_mgr.get("ldconsole_path", LDCONSOLE_PATH),
             fallback_config_name=self.config_name_combo.currentText(),
         )
         self.scheduler_thread.log_signal.connect(log_util.log.print)
+        self.scheduler_thread.task_status_signal.connect(self.update_current_task_status)
         self.scheduler_thread.finished_signal.connect(self.scheduler_finished)
         self.scheduler_thread.start()
 
@@ -479,6 +613,8 @@ class EmulatorSelector(QWidget):
     def scheduler_finished(self):
         log_util.log.print("调度线程已停止")
         self.scheduler_thread = None
+        for emulator_name in list(self.current_task_status_by_emulator):
+            self.update_current_task_status(emulator_name, "")
         self.status_label.setText("所有任务线程已完成")
         self.start_button.setText("开始执行")
         self.is_running = False

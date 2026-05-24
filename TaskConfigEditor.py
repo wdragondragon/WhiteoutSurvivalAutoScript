@@ -31,6 +31,7 @@ class TaskConfigEditor(QWidget):
         left_layout.addWidget(add_button)
 
         # 中间：当前任务配置
+        self.shuffle_tasks_checkbox = QCheckBox("乱序执行任务")
         self.config_list = QListWidget()
         self.config_list.currentRowChanged.connect(self.update_param_editor)
 
@@ -44,6 +45,7 @@ class TaskConfigEditor(QWidget):
 
         mid_layout = QVBoxLayout()
         mid_layout.addWidget(QLabel("当前配置"))
+        mid_layout.addWidget(self.shuffle_tasks_checkbox)
         mid_layout.addWidget(self.config_list)
         mid_layout.addWidget(btn_up)
         mid_layout.addWidget(btn_down)
@@ -175,11 +177,20 @@ class TaskConfigEditor(QWidget):
 
     def get_task_config(self):
         self.save_params()
-        return self.task_config
+        return {
+            "shuffle_tasks": self.shuffle_tasks_checkbox.isChecked(),
+            "tasks": self.task_config,
+        }
 
     def load_config_editor(self, data):
         try:
-            self.task_config = data.get("tasks", [])
+            if isinstance(data, list):
+                self.task_config = data
+                self.shuffle_tasks_checkbox.setChecked(False)
+            else:
+                data = data or {}
+                self.task_config = data.get("tasks", [])
+                self.shuffle_tasks_checkbox.setChecked(bool(data.get("shuffle_tasks", False)))
             self.refresh_task_list_ui()
             self.config_list.setCurrentRow(0)
         except Exception as e:

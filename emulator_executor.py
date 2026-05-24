@@ -8,6 +8,7 @@ from typing import Union, List, Optional, Tuple
 import cv2
 import numpy as np
 
+from app_paths import resolve_resource_path
 import config_manager
 import log_util
 
@@ -104,7 +105,7 @@ class EmulatorExecutor:
 
     def tap_and_wait(self, x, y, wait_seconds=0.5):
         self.click(x, y)
-        time.sleep(wait_seconds)
+        time.sleep(max(0.0, wait_seconds))
 
     def save_debug_screenshot(self, prefix="screenshot"):
         image = self.screenshot()
@@ -147,7 +148,7 @@ class EmulatorExecutor:
             return False
         self.click(x, y)
         if wait_seconds:
-            time.sleep(wait_seconds)
+            time.sleep(max(0.0, wait_seconds))
         return True
 
     def wait_until_found(self,
@@ -157,7 +158,8 @@ class EmulatorExecutor:
                          threshold: float = config_manager.MATCH_THRESHOLD,
                          region: Optional[Tuple[int, int, int, int]] = None
                          ) -> Tuple[Optional[int], Optional[int], bool]:
-        end_time = time.time() + timeout
+        interval = max(0.0, interval)
+        end_time = time.time() + max(0.0, timeout)
         while time.time() < end_time:
             x, y, find = self.find_img(template_path, threshold=threshold, region=region, log_missing=False)
             if find:
@@ -190,6 +192,7 @@ class EmulatorExecutor:
             template_path = [template_path]
 
         for path in template_path:
+            path = resolve_resource_path(path)
             template = cv2.imread(path)
             if template is None:
                 if log_missing:

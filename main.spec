@@ -1,15 +1,22 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+from PyInstaller.utils.hooks import collect_submodules
+
 
 a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('images/icon.png','images/')],
-    hiddenimports=[],
+    datas=[
+        ('images/icon.png', 'images'),
+        ('buttons', 'buttons'),
+        ('configs', 'configs'),
+        ('tasks/*.yaml', 'tasks'),
+    ],
+    hiddenimports=collect_submodules('tasks'),
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=['pyinstaller_runtime_hook.py'],
     excludes=[],
     noarchive=False,
     optimize=0,

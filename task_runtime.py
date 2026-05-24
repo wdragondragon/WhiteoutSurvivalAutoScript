@@ -2,7 +2,7 @@ import random
 import time
 
 import log_util
-from execution_config import normalize_execution_settings
+from execution_config import normalize_execution_settings, normalize_task_config_settings
 from StepStatus import StepStatus
 from TaskStatus import TaskStatus
 
@@ -76,10 +76,11 @@ def register_task(name, param_defs=None, pre_task=None, after_task=None, initial
 
 class TaskExecutor:
 
-    def __init__(self, emulator_name=None, emulator_executor=None, runtime_options=None):
+    def __init__(self, emulator_name=None, emulator_executor=None, runtime_options=None, task_status_callback=None):
         self.run_status = True
         self.state = {}
         self.runtime_options = normalize_execution_settings(runtime_options)
+        self.task_status_callback = task_status_callback
         self.current_task_name = None
         self.current_task_initial_state = None
         self._handling_session_recovery = False
@@ -91,6 +92,14 @@ class TaskExecutor:
         self.emulator_executor = emulator_executor
         if self.emulator_executor is not None:
             self.emulator_executor.before_input_action = self.before_input_action
+
+    def _emit_task_status(self, task_name):
+        if not self.task_status_callback:
+            return
+        try:
+            self.task_status_callback(self.emulator_name, task_name or "")
+        except Exception as e:
+            log_util.log.print(f"[{self.emulator_name}] 任务状态回调失败: {e}")
 
     def execute_task(self, task_name, params):
         if not params:
@@ -108,9 +117,11 @@ class TaskExecutor:
             for retry_index in range(session_retry_limit + 1):
                 self.current_task_name = task_name
                 self.current_task_initial_state = initial_state
+                self._emit_task_status(f"准备: {task_name}")
                 try:
                     if not self.prepare_current_task_state():
                         return False
+                    self._emit_task_status(task_name)
                     return func(self, params)
                 except SessionRecovered:
                     if retry_index >= session_retry_limit:
@@ -127,6 +138,7 @@ class TaskExecutor:
         finally:
             self.current_task_name = previous_task_name
             self.current_task_initial_state = previous_initial_state
+            self._emit_task_status(previous_task_name)
 
     def execute_task_config(self, task_config, runtime_options=None):
         from task_helpers.params import configured_shared_march_limit
@@ -148,8 +160,9 @@ class TaskExecutor:
             self.state.pop("active_march_shared_limit", None)
 
         try:
+            task_config_settings = normalize_task_config_settings(task_config)
             tasks = list(task_config.get("tasks", []))
-            if self.runtime_options.get("shuffle_tasks") and len(tasks) > 1:
+            if task_config_settings.get("shuffle_tasks") and len(tasks) > 1:
                 random.shuffle(tasks)
                 order = " -> ".join(task.get("name", "未知任务") for task in tasks)
                 log_util.log.print(f"[{self.emulator_name}] 本轮乱序任务顺序: {order}")
@@ -195,7 +208,10 @@ class TaskExecutor:
         try:
             end_time = time.time() + relogin_interval
             while self.run_status and time.time() < end_time:
-                time.sleep(min(0.2, end_time - time.time()))
+                remaining = end_time - time.time()
+                if remaining <= 0:
+                    break
+                time.sleep(min(0.2, remaining))
             if not self.run_status:
                 return
             self.emulator_executor.click(x, y)
@@ -216,6 +232,7 @@ class TaskExecutor:
 
     def close(self):
         self.run_status = False
+        self._emit_task_status("")
 
     def get_run_status(self):
         return self.run_status

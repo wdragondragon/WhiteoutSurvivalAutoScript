@@ -22,7 +22,10 @@ def check_open(executor: TaskExecutor, params):
 def re_login(executor: TaskExecutor, params):
     x, y, find = executor.emulator_executor.find_img("buttons/relogin.png")
     if find:
-        inv = params.get("interval", 0)
+        try:
+            inv = max(0.0, float(params.get("interval", 0) or 0))
+        except (TypeError, ValueError):
+            inv = 0.0
         log_util.log.print(f"[{executor.emulator_name}] 识别到游戏未登录，等待{inv}秒后重新登录")
         time.sleep(inv)
         log_util.log.print(f"[{executor.emulator_name}] 执行游戏重新登录")

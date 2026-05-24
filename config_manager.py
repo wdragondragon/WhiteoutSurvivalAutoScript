@@ -3,7 +3,8 @@ import json
 import os
 import threading
 
-from execution_config import normalize_emulator_settings, normalize_execution_settings
+from app_paths import config_file_path, task_configs_dir
+from execution_config import normalize_execution_settings
 
 # 修改为你的雷电模拟器路径
 ADB_PATH = r"E:\leidian\LDPlayer9\adb.exe"
@@ -15,7 +16,9 @@ MATCH_THRESHOLD = 0.85
 
 
 class ConfigManager:
-    def __init__(self, filepath="config.json"):
+    def __init__(self, filepath=None):
+        if filepath is None:
+            filepath = config_file_path()
         self.filepath = filepath
         self._lock = threading.Lock()
         self.config = {}
@@ -33,6 +36,7 @@ class ConfigManager:
 
     def save(self):
         with self._lock:
+            os.makedirs(os.path.dirname(os.path.abspath(self.filepath)), exist_ok=True)
             with open(self.filepath, "w", encoding="utf-8") as f:
                 json.dump(self.config, f, indent=2, ensure_ascii=False)
 
@@ -63,34 +67,24 @@ class ConfigManager:
         normalized = normalize_execution_settings(settings)
         self.config.update(normalized)
 
-    def get_emulator_settings(self, emulator_name):
-        settings_map = self.config.get("emulator_settings", {})
-        return normalize_emulator_settings(settings_map.get(emulator_name, {}))
-
-    def set_emulator_settings(self, emulator_name, settings):
-        if "emulator_settings" not in self.config:
-            self.config["emulator_settings"] = {}
-        self.config["emulator_settings"][emulator_name] = normalize_emulator_settings(settings)
-
-    def get_emulator_shuffle_tasks(self, emulator_name):
-        return self.get_emulator_settings(emulator_name).get("shuffle_tasks", False)
-
-    def set_emulator_shuffle_tasks(self, emulator_name, enabled):
-        settings = self.get_emulator_settings(emulator_name)
-        settings["shuffle_tasks"] = bool(enabled)
-        self.set_emulator_settings(emulator_name, settings)
-
 
 class TaskConfigManager:
-    def __init__(self, config_path="configs/"):
+    def __init__(self, config_path=None):
+        if config_path is None:
+            config_path = task_configs_dir()
         self.config_path = config_path
-        os.makedirs("configs", exist_ok=True)
+        os.makedirs(self.config_path, exist_ok=True)
 
     def save_config_to_file(self, config_name, task_config):
-        data = {
-            "name": config_name,
-            "tasks": task_config
-        }
+        if isinstance(task_config, dict):
+            data = dict(task_config)
+            data["name"] = config_name
+            data.setdefault("tasks", [])
+        else:
+            data = {
+                "name": config_name,
+                "tasks": task_config
+            }
         path = os.path.join(self.config_path, f"{config_name}.json")
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)

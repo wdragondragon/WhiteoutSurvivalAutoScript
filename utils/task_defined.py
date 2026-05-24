@@ -9,6 +9,8 @@ from utils.task_flow import TaskFlow
 import importlib
 import pkgutil
 
+from app_paths import resource_path
+
 ACTION_MAP = {
     "click_img": lambda executor, params: click_img(
         executor,
@@ -18,10 +20,16 @@ ACTION_MAP = {
 }
 
 
-def load_yaml_tasks(tasks_dir="tasks"):
+def load_yaml_tasks(tasks_dir=None):
     """
     自动扫描目录下 YAML 文件，将任务注册到 TASK_REGISTRY
     """
+    if tasks_dir is None:
+        tasks_dir = resource_path("tasks")
+    if not os.path.isdir(tasks_dir):
+        log_util.log.print(f"未找到 YAML 任务目录：{tasks_dir}")
+        return
+
     for filename in os.listdir(tasks_dir):
         if not filename.endswith(".yaml") and not filename.endswith(".yml"):
             continue

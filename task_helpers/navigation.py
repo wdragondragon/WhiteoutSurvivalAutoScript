@@ -86,6 +86,24 @@ def _click_city_wild_button(executor):
     )
 
 
+def _is_game_surface_visible(executor):
+    if _is_wild_or_search_visible(executor):
+        return True
+
+    game_surface_templates = [
+        _asset("search_icon.png"),
+        _asset("search_button.png"),
+        _asset("beast_category.png"),
+        _asset("back_arrow.png"),
+        _asset("city_wild_button.png"),
+        _asset("close_x.png"),
+        _asset("stamina_close_x.png"),
+        "buttons/relogin.png",
+    ]
+    _, _, found = _find_templates(executor, game_surface_templates, threshold=0.72)
+    return found
+
+
 def _clear_known_overlays(executor, max_rounds=6):
     close_templates = [
         _asset("close_x.png"),
@@ -150,20 +168,30 @@ def _return_home_or_wild(executor):
 
 def _ensure_game_open(executor):
     emulator = executor.emulator_executor
-    x, y, found = emulator.find_img("buttons/button1.png", threshold=0.76, log_missing=False)
-    if not found:
+    if _is_game_surface_visible(executor):
         return True
 
-    log_util.log.print(f"[{executor.emulator_name}] 识别到游戏未打开，打开游戏")
-    emulator.click(x, y)
     end_time = time.time() + 70
+    launched = False
     while executor.run_status and time.time() < end_time:
-        _, _, icon_still_visible = emulator.find_img("buttons/button1.png", threshold=0.76, log_missing=False)
-        if not icon_still_visible:
+        if _is_game_surface_visible(executor):
             return True
-        time.sleep(1)
+
+        x, y, found = emulator.find_img("buttons/button1.png", threshold=0.76, log_missing=False)
+        if found:
+            log_util.log.print(f"[{executor.emulator_name}] 识别到游戏未打开，打开游戏")
+            emulator.click(x, y)
+            launched = True
+            _sleep_while_running(executor, 2.0)
+            continue
+
+        _sleep_while_running(executor, 1.0)
+
     path = emulator.save_debug_screenshot("open_game_timeout")
-    log_util.log.print(f"[{executor.emulator_name}] 等待游戏打开超时，截图: {path}")
+    if launched:
+        log_util.log.print(f"[{executor.emulator_name}] 等待游戏打开超时，截图: {path}")
+    else:
+        log_util.log.print(f"[{executor.emulator_name}] 未能识别游戏入口或游戏页面，截图: {path}")
     return False
 
 

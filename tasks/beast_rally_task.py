@@ -161,6 +161,11 @@ def rally_icefield_beast(executor, params):
     stamina_can_reserve_count = _int_param(params, "stamina_can_reserve_count", 0, minimum=0)
     use_diamond_for_stamina = _bool_param(params, "use_diamond_for_stamina", False)
 
+    if not _ensure_game_open(executor):
+        return False
+    if not _ensure_wild(executor):
+        return False
+
     log_util.log.print(
         f"[{executor.emulator_name}] 开始自动集结冰原巨兽: 等级={level}, 编队={formation_indices}, "
         f"时长={duration_minutes}分钟, 搜索次数={max_attempts}, 使用背包体力罐头={use_stamina_can}, "
@@ -168,10 +173,6 @@ def rally_icefield_beast(executor, params):
         f"有英雄才出征={require_hero_for_march}"
     )
 
-    if not _ensure_game_open(executor):
-        return False
-    if not _ensure_wild(executor):
-        return False
     if _should_skip_for_active_marches(executor, formation_indices):
         return True
 

@@ -10,7 +10,7 @@ DEFAULT_EXECUTION_SETTINGS = {
     "session_retry_limit": 3,
 }
 
-DEFAULT_EMULATOR_SETTINGS = {
+DEFAULT_TASK_CONFIG_SETTINGS = {
     "shuffle_tasks": False,
 }
 
@@ -69,9 +69,9 @@ def normalize_execution_settings(raw_settings=None):
     return settings
 
 
-def normalize_emulator_settings(raw_settings=None):
+def normalize_task_config_settings(raw_settings=None):
     raw_settings = raw_settings or {}
-    settings = DEFAULT_EMULATOR_SETTINGS.copy()
+    settings = DEFAULT_TASK_CONFIG_SETTINGS.copy()
     settings.update(raw_settings)
     settings["shuffle_tasks"] = _bool_value(settings.get("shuffle_tasks"), False)
     return settings

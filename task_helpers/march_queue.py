@@ -97,29 +97,116 @@ def _classify_march_queue_row(row_image):
 
     if _template_matches_image(
             row_image,
-            _march_queue_templates("gather_status_text.png"),
-            threshold=0.84,
+            _march_queue_templates(
+                "gather_status_text.png",
+                "gather_status_row.png",
+                "gather_coal_row.png",
+                "gather_iron_row.png",
+                "gather_row_meat.png",
+                "gather_wood_row.png",
+            ),
+            threshold=0.70,
     ):
+        return "gather"
+
+    if _looks_like_gather_queue_row(row_image):
         return "gather"
 
     return "unknown"
 
 
+def _green_mask(image, min_value=100):
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    return (((hsv[:, :, 0] > 45) & (hsv[:, :, 0] < 85) &
+             (hsv[:, :, 1] > 80) & (hsv[:, :, 2] > min_value)).astype("uint8")) * 255
+
+
+def _looks_like_gather_queue_row(row_image):
+    icon_region = row_image[6:38, 4:42]
+    progress_region = row_image[22:40, 36:145]
+    icon_green_pixels = int((_green_mask(icon_region, min_value=90) > 0).sum())
+    progress_green_pixels = int((_green_mask(progress_region, min_value=100) > 0).sum())
+    return icon_green_pixels >= 80 and progress_green_pixels >= 60
+
+
+def _dynamic_march_queue_rows(image):
+    height, width = image.shape[:2]
+    x1 = int(width * 0.0)
+    x2 = int(width * 0.40)
+    y1 = int(height * 0.16)
+    y2 = int(height * 0.60)
+    roi = image[y1:y2, x1:x2]
+    if roi.size == 0:
+        return []
+
+    mask = _green_mask(roi)
+    centers = []
+
+    row_hits = (mask > 0).sum(axis=1)
+    min_row_pixels = max(12, int(mask.shape[1] * 0.10))
+    group_start = None
+    group_weight = 0
+    group_weighted_y = 0
+    for y, hits in enumerate(row_hits):
+        if hits >= min_row_pixels:
+            if group_start is None:
+                group_start = y
+                group_weight = 0
+                group_weighted_y = 0
+            group_weight += int(hits)
+            group_weighted_y += int(hits) * y
+        elif group_start is not None:
+            if group_weight >= min_row_pixels * 3:
+                centers.append(y1 + int(round(group_weighted_y / group_weight)))
+            group_start = None
+            group_weight = 0
+            group_weighted_y = 0
+    if group_start is not None and group_weight >= min_row_pixels * 3:
+        centers.append(y1 + int(round(group_weighted_y / group_weight)))
+
+    if not centers:
+        num_labels, _, stats, centroids = cv2.connectedComponentsWithStats(mask, 8)
+        for index in range(1, num_labels):
+            _, _, component_width, component_height, area = stats[index]
+            if component_width < 18 or component_height < 4 or area < 80:
+                continue
+            centers.append(int(y1 + centroids[index][1]))
+
+    merged_centers = []
+    for center_y in sorted(centers):
+        if any(abs(center_y - existing) < 24 for existing in merged_centers):
+            continue
+        merged_centers.append(center_y)
+
+    rows = []
+    for center_y in merged_centers[:MAX_ACTIVE_MARCHES]:
+        row_y1 = max(0, center_y - int(22 * height / BASE_SCREEN_HEIGHT))
+        row_y2 = min(height, row_y1 + int(44 * height / BASE_SCREEN_HEIGHT))
+        row_x1 = int(width * 6 / BASE_SCREEN_WIDTH)
+        row_x2 = int(width * 276 / BASE_SCREEN_WIDTH)
+        row = image[row_y1:row_y2, row_x1:row_x2]
+        if row.size:
+            rows.append(row)
+    return rows
+
+
 def _summarize_march_queue_image(image):
     summary = {"total": 0, "gather": 0, "beast": 0, "unknown": 0}
     height, width = image.shape[:2]
-    for base_y in MARCH_QUEUE_ROW_BASE_Y:
-        y1 = int(height * base_y / BASE_SCREEN_HEIGHT)
-        y2 = int(height * (base_y + 44) / BASE_SCREEN_HEIGHT)
-        x1 = int(width * 6 / BASE_SCREEN_WIDTH)
-        x2 = int(width * 276 / BASE_SCREEN_WIDTH)
-        row = image[y1:y2, x1:x2]
-        if row.size == 0:
-            continue
+    rows = _dynamic_march_queue_rows(image)
+    if not rows:
+        rows = []
+        for base_y in MARCH_QUEUE_ROW_BASE_Y:
+            y1 = int(height * base_y / BASE_SCREEN_HEIGHT)
+            y2 = int(height * (base_y + 44) / BASE_SCREEN_HEIGHT)
+            x1 = int(width * 6 / BASE_SCREEN_WIDTH)
+            x2 = int(width * 276 / BASE_SCREEN_WIDTH)
+            row = image[y1:y2, x1:x2]
+            if row.size:
+                rows.append(row)
 
-        hsv = cv2.cvtColor(row, cv2.COLOR_BGR2HSV)
-        green_pixels = int(((hsv[:, :, 0] > 45) & (hsv[:, :, 0] < 85) &
-                            (hsv[:, :, 1] > 80) & (hsv[:, :, 2] > 100)).sum())
+    for row in rows:
+        green_pixels = int((_green_mask(row) > 0).sum())
         if green_pixels < 25:
             continue
 

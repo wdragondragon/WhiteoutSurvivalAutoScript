@@ -3,12 +3,14 @@ import sys
 
 from PyQt5.QtWidgets import QApplication
 
+from app_paths import config_file_path, ensure_user_data
 from config_manager import ConfigManager
 from simulator_ui import EmulatorSelector
 from utils import task_defined
 
 if __name__ == '__main__':
-    config_mgr = ConfigManager("config.json")
+    ensure_user_data()
+    config_mgr = ConfigManager(config_file_path())
 
     # 自动加载所有任务
     task_defined.load_all_tasks()

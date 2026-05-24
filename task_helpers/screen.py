@@ -3,6 +3,7 @@ import time
 
 import cv2
 
+from app_paths import resolve_resource_path
 from task_helpers.constants import (
     BASE_SCREEN_HEIGHT,
     BASE_SCREEN_WIDTH,
@@ -38,17 +39,22 @@ def _existing_templates(*paths):
     for path in paths:
         if isinstance(path, (list, tuple)):
             result.extend(_existing_templates(*path))
-        elif path and os.path.exists(path):
-            result.append(path)
+        elif path:
+            resolved_path = resolve_resource_path(path)
+            if os.path.exists(resolved_path):
+                result.append(resolved_path)
     return result
 
 
 def _sleep_while_running(executor, seconds):
-    end_time = time.time() + seconds
+    end_time = time.time() + max(0.0, seconds)
     while executor.run_status and time.time() < end_time:
         if hasattr(executor, "check_session_checkpoint"):
             executor.check_session_checkpoint()
-        time.sleep(min(0.2, end_time - time.time()))
+        remaining = end_time - time.time()
+        if remaining <= 0:
+            break
+        time.sleep(min(0.2, remaining))
 
 
 def _base_to_ratio(x, y):

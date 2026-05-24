@@ -192,15 +192,16 @@ def auto_gather_resources(executor, params):
         log_util.log.print(f"[{executor.emulator_name}] 自动挖矿未配置启用队列，跳过")
         return True
 
+    if not _ensure_game_open(executor):
+        return False
+    if not _ensure_wild(executor):
+        return False
+
     log_util.log.print(
         f"[{executor.emulator_name}] 开始自动挖矿: 队列数={len(queues)}, 搜索次数={max_attempts}, "
         f"只保留蓝色英雄={keep_only_blue_heroes}, 首英雄必需={require_first_hero}"
     )
 
-    if not _ensure_game_open(executor):
-        return False
-    if not _ensure_wild(executor):
-        return False
     if _should_skip_for_active_limit(executor, len(queues), "挖矿", queue_type="gather"):
         return True
 
