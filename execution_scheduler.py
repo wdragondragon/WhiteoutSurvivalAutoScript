@@ -66,7 +66,7 @@ class BatchExecutionThread(QThread):
             self.log_signal.emit(f"开始执行本轮分批调度，最多同时在线 {max_online} 个模拟器")
             self._run_one_rolling_cycle(max_online)
             if self._is_running:
-                self._sleep_interruptible(float(self.execution_settings.get("batch_between_delay_sec", 3.0)))
+                self._sleep_between_batches(float(self.execution_settings.get("batch_between_delay_sec", 3.0)))
 
     def _run_one_rolling_cycle(self, max_online):
         pending_names = list(self.selected_names)
@@ -92,7 +92,16 @@ class BatchExecutionThread(QThread):
             if emulator:
                 self._start_once_worker(emulator, workers)
             elif name in self._active_batch_names:
-                starting[name] = time.time() + int(self.execution_settings.get("batch_start_timeout_sec", 180))
+                timeout = int(self.execution_settings.get("batch_start_timeout_sec", 180))
+                starting[name] = {
+                    "deadline": time.time() + timeout,
+                    "started_at": time.time(),
+                    "last_connect_at": 0.0,
+                    "last_connect_detail_log_at": 0.0,
+                    "last_log_at": 0.0,
+                    "restarted": False,
+                    "timeout": timeout,
+                }
 
     def _launch_or_get_ready_emulator(self, name):
         emulators_by_name = {emu.name: emu for emu in self._safe_get_all_emulators()}
@@ -109,9 +118,16 @@ class BatchExecutionThread(QThread):
             return emulator
 
         if emulator.is_running():
-            self.log_signal.emit(f"[分批启动] {name} 已运行，等待 ADB 就绪")
+            device_name = self.manager.connect_adb_device(emulator.index)
+            if device_name:
+                emulator.device_name = device_name
+                self.log_signal.emit(f"[分批启动] {name} 已连接 ADB: {device_name}")
+                return emulator
+            expected_device = self.manager.expected_adb_device_name(emulator.index)
+            self.log_signal.emit(f"[分批启动] {name} 已运行，等待 ADB 就绪（尝试连接 {expected_device}）")
             return None
 
+        self._cleanup_stale_adb_before_launch(name, emulator)
         if self.manager.start_emulator(emulator.index):
             self.log_signal.emit(f"[分批启动] 已发送启动命令: {name}")
         else:
@@ -120,23 +136,91 @@ class BatchExecutionThread(QThread):
                 self._active_batch_names.discard(name)
         return None
 
+    def _cleanup_stale_adb_before_launch(self, name, emulator):
+        status_text = self.manager.expected_adb_status_text(emulator.index)
+        statuses = self.manager.expected_adb_statuses(emulator.index)
+        has_stale_entry = any(status for key, status in statuses.items() if key != "error")
+        if not has_stale_entry:
+            return
+        self.manager.disconnect_adb_device(emulator.index)
+        self.log_signal.emit(f"[分批启动] {name} 启动前已清理旧 ADB 连接（{status_text}）")
+
     def _promote_ready_starting_emulators(self, starting, workers):
         if not starting:
             return
 
         emulators_by_name = {emu.name: emu for emu in self._safe_get_all_emulators()}
         now = time.time()
-        for name, deadline in list(starting.items()):
+        for name, state in list(starting.items()):
             emulator = emulators_by_name.get(name)
+            if emulator and emulator.is_running() and not emulator.device_name:
+                device_name = self._connect_starting_emulator_adb(emulator, state, now)
+                if device_name:
+                    emulator.device_name = device_name
             if emulator and emulator.is_running() and emulator.device_name:
                 starting.pop(name, None)
                 self.log_signal.emit(f"[分批启动] {name} 已上线，开始执行")
                 self._start_once_worker(emulator, workers)
                 continue
-            if now >= deadline:
+            self._log_starting_wait(name, emulator, state, now)
+            self._restart_stuck_starting_emulator(name, emulator, state, now)
+            if now >= state["deadline"]:
                 starting.pop(name, None)
                 self.log_signal.emit(f"[分批启动] {name} 等待上线超时，关闭并跳过本轮")
                 self._stop_and_wait_offline(name)
+
+    def _log_starting_wait(self, name, emulator, state, now):
+        if now - state.get("last_log_at", 0.0) < 15:
+            return
+        state["last_log_at"] = now
+        if not emulator:
+            self.log_signal.emit(f"[分批启动] {name} 等待模拟器出现在列表中")
+            return
+        expected_device = self.manager.expected_adb_device_name(emulator.index)
+        adb_status = self.manager.expected_adb_status_text(emulator.index)
+        if emulator.is_running():
+            self.log_signal.emit(f"[分批启动] {name} 窗口已运行，等待 ADB 就绪（尝试连接 {expected_device}，当前 {adb_status}）")
+            return
+        else:
+            self.log_signal.emit(f"[分批启动] {name} 等待模拟器窗口启动")
+
+    def _connect_starting_emulator_adb(self, emulator, state, now):
+        if now - state.get("last_connect_at", 0.0) < 5:
+            return None
+        state["last_connect_at"] = now
+        device_name = self.manager.connect_adb_device(emulator.index)
+        if device_name:
+            self.log_signal.emit(f"[分批启动] {emulator.name} ADB 已连接: {device_name}")
+        if not device_name:
+            detail = getattr(self.manager, "last_adb_connect_detail", "")
+            if detail and now - state.get("last_connect_detail_log_at", 0.0) >= 15:
+                state["last_connect_detail_log_at"] = now
+                self.log_signal.emit(f"[分批启动] {emulator.name} ADB 仍未就绪：{detail}")
+        return device_name
+
+    def _restart_stuck_starting_emulator(self, name, emulator, state, now):
+        if not emulator or not emulator.is_running() or emulator.device_name or state.get("restarted"):
+            return
+        timeout = max(1, int(state.get("timeout", 180)))
+        restart_after = min(60, max(25, timeout * 0.4))
+        if now - state.get("started_at", now) < restart_after:
+            return
+
+        self.log_signal.emit(f"[分批启动] {name} 长时间未检测到 ADB，尝试重启模拟器")
+        state["restarted"] = True
+        if not self.manager.stop_emulator(emulator.index):
+            self.log_signal.emit(f"[分批启动] {name} 重启前关闭失败，继续等待")
+            return
+        self._wait_emulator_offline(name, timeout=25)
+        if self.manager.start_emulator(emulator.index):
+            self.log_signal.emit(f"[分批启动] {name} 已重新发送启动命令")
+            state["started_at"] = time.time()
+            state["deadline"] = time.time() + timeout
+            state["last_connect_at"] = 0.0
+            state["last_connect_detail_log_at"] = 0.0
+            state["last_log_at"] = 0.0
+        else:
+            self.log_signal.emit(f"[分批启动] {name} 重新启动失败，继续等待超时")
 
     def _start_once_worker(self, emulator, workers):
         worker = threading.Thread(target=self._run_once_worker, args=(emulator,), daemon=True)
@@ -276,6 +360,27 @@ class BatchExecutionThread(QThread):
         except Exception as e:
             self.log_signal.emit(f"获取模拟器列表失败: {e}")
             return []
+
+    def _sleep_between_batches(self, seconds):
+        seconds = max(0.0, seconds)
+        if seconds <= 0:
+            self.log_signal.emit("本轮分批调度完成，批次间隔为 0 秒，立即开始下一轮")
+            return
+
+        self.log_signal.emit(f"本轮分批调度完成，等待 {seconds:g} 秒后开始下一轮")
+        end_time = time.time() + seconds
+        next_log_at = time.time() + min(30.0, seconds)
+        while self._is_running and time.time() < end_time:
+            remaining = max(0.0, end_time - time.time())
+            if time.time() >= next_log_at and remaining > 0:
+                self.log_signal.emit(f"[批次间隔] 等待中，剩余约 {remaining:.0f} 秒")
+                next_log_at = time.time() + min(30.0, max(1.0, remaining))
+            time.sleep(min(0.2, remaining))
+
+        if self._is_running:
+            self.log_signal.emit("批次间隔等待结束，开始下一轮分批调度")
+        else:
+            self.log_signal.emit("批次间隔等待已中断，调度停止")
 
     def _sleep_interruptible(self, seconds):
         end_time = time.time() + max(0.0, seconds)

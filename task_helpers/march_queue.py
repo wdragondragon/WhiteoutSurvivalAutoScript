@@ -67,15 +67,15 @@ def _classify_march_queue_row(row_image):
     icon_region = row_image[6:38, 4:42]
     if _template_matches_image(
             row_image,
-            _march_queue_templates("rally_icon.png"),
-            threshold=0.72,
+            _march_queue_templates("rally_row.png", "rally_icon.png"),
+            threshold=0.68,
     ):
         return "beast"
 
     if _template_matches_image(
             row_image,
             _march_queue_templates("rally_status_icon.png", "rally_status_text.png", "rally_text.png"),
-            threshold=0.84,
+            threshold=0.76,
     ):
         return "beast"
 
@@ -112,6 +112,12 @@ def _classify_march_queue_row(row_image):
     if _looks_like_gather_queue_row(row_image):
         return "gather"
 
+    if _looks_like_active_non_gather_queue_row(row_image):
+        return "beast"
+
+    if _looks_like_beast_queue_row(row_image):
+        return "beast"
+
     return "unknown"
 
 
@@ -121,12 +127,34 @@ def _green_mask(image, min_value=100):
              (hsv[:, :, 1] > 80) & (hsv[:, :, 2] > min_value)).astype("uint8")) * 255
 
 
+def _red_or_orange_mask(image, min_value=90):
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    return (((((hsv[:, :, 0] <= 10) | (hsv[:, :, 0] >= 170)) |
+              ((hsv[:, :, 0] >= 10) & (hsv[:, :, 0] <= 35))) &
+             (hsv[:, :, 1] > 70) & (hsv[:, :, 2] > min_value)).astype("uint8")) * 255
+
+
 def _looks_like_gather_queue_row(row_image):
     icon_region = row_image[6:38, 4:42]
     progress_region = row_image[22:40, 36:145]
     icon_green_pixels = int((_green_mask(icon_region, min_value=90) > 0).sum())
     progress_green_pixels = int((_green_mask(progress_region, min_value=100) > 0).sum())
     return icon_green_pixels >= 80 and progress_green_pixels >= 60
+
+
+def _looks_like_active_non_gather_queue_row(row_image):
+    progress_region = row_image[20:42, 36:180]
+    progress_green_pixels = int((_green_mask(progress_region, min_value=100) > 0).sum())
+    return progress_green_pixels >= 80
+
+
+def _looks_like_beast_queue_row(row_image):
+    icon_region = row_image[4:40, 4:46]
+    status_region = row_image[6:40, 40:170]
+    icon_warm_pixels = int((_red_or_orange_mask(icon_region, min_value=90) > 0).sum())
+    status_warm_pixels = int((_red_or_orange_mask(status_region, min_value=100) > 0).sum())
+    status_green_pixels = int((_green_mask(status_region, min_value=100) > 0).sum())
+    return icon_warm_pixels >= 80 and (status_warm_pixels >= 45 or status_green_pixels >= 60)
 
 
 def _dynamic_march_queue_rows(image):

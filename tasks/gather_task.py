@@ -1,11 +1,12 @@
 import log_util
-from task_helpers.constants import GATHER_RESOURCE_CONFIG, GATHER_RESOURCE_OPTIONS, MARCH_SAME_TARGET
+from task_helpers.constants import GATHER_RESOURCE_CONFIG, GATHER_RESOURCE_OPTIONS, MARCH_SAME_TARGET, MAX_ACTIVE_MARCHES
 from task_helpers.formation import (
     _first_gather_hero_present,
     _keep_only_blue_gather_heroes,
+    _wait_formation_visible,
 )
 from task_helpers.march import _click_march
-from task_helpers.march_queue import _should_skip_for_active_limit
+from task_helpers.march_queue import _get_march_queue_summary
 from task_helpers.navigation import (
     _click_search_button,
     _ensure_game_open,
@@ -18,7 +19,6 @@ from task_helpers.params import (
     _bool_param,
     _gather_queue_configs,
     _int_param,
-    _next_gather_queue,
 )
 from task_helpers.screen import (
     _asset,
@@ -144,17 +144,96 @@ def _open_gather_formation(executor):
         log_util.log.print(f"[{executor.emulator_name}] 未找到采集按钮模板，尝试使用预设坐标")
         _click_base(executor, 225, 352, wait_seconds=1.2)
 
-    _, _, formation_found = _wait_templates(
-        executor,
-        [_asset("march_button.png"), _asset("formation_anchor.png")],
-        timeout=6,
-        threshold=0.74,
-    )
-    if not formation_found:
+    if not _wait_formation_visible(executor, timeout=6):
         path = executor.emulator_executor.save_debug_screenshot("gather_formation_not_found")
         log_util.log.print(f"[{executor.emulator_name}] 未进入采集编队页面，截图: {path}")
         return False
     return True
+
+
+def _planned_gather_queues(executor, queues):
+    queue_summary = _get_march_queue_summary(executor)
+    active_count = queue_summary["total"]
+    gather_count = queue_summary.get("gather", 0)
+    available_slots = max(0, MAX_ACTIVE_MARCHES - active_count)
+    remaining_configured = max(0, len(queues) - gather_count)
+    plan_count = min(len(queues), remaining_configured, available_slots)
+    summary_detail = (
+        f"挖矿={queue_summary.get('gather', 0)}, "
+        f"巨兽={queue_summary.get('beast', 0)}, "
+        f"未识别={queue_summary.get('unknown', 0)}"
+    )
+
+    if plan_count <= 0:
+        log_util.log.print(
+            f"[{executor.emulator_name}] 当前出征队列 {active_count}/{MAX_ACTIVE_MARCHES}，"
+            f"挖矿队列 {gather_count}/{len(queues)}，跳过本轮（{summary_detail}）"
+        )
+        return []
+
+    log_util.log.print(
+        f"[{executor.emulator_name}] 当前出征队列 {active_count}/{MAX_ACTIVE_MARCHES}，"
+        f"挖矿队列 {gather_count}/{len(queues)}，本轮计划出征 {plan_count} 队（{summary_detail}）"
+    )
+    return queues[:plan_count]
+
+
+def _run_gather_queue(
+        executor,
+        queue,
+        max_attempts,
+        retry_interval,
+        keep_only_blue_heroes,
+        require_first_hero,
+):
+    attempt = 1
+    same_target_retries = 0
+    same_target_retry_limit = max_attempts
+    while attempt <= max_attempts:
+        if not _search_gather_resource_once(executor, queue, attempt, max_attempts):
+            if attempt < max_attempts:
+                log_util.log.print(f"[{executor.emulator_name}] 未找到采集资源点，{retry_interval} 秒后重试")
+                _sleep_while_running(executor, retry_interval)
+                attempt += 1
+                continue
+            log_util.log.print(f"[{executor.emulator_name}] 未找到可采集资源点，结束本轮")
+            _return_home_or_wild(executor)
+            return False
+
+        if not _open_gather_formation(executor):
+            _return_home_or_wild(executor)
+            if attempt < max_attempts:
+                log_util.log.print(f"[{executor.emulator_name}] 未进入采集编队页，{retry_interval} 秒后重新搜索")
+                _sleep_while_running(executor, retry_interval)
+                attempt += 1
+                continue
+            return False
+
+        if keep_only_blue_heroes:
+            _keep_only_blue_gather_heroes(executor)
+
+        if require_first_hero and not _first_gather_hero_present(executor):
+            log_util.log.print(f"[{executor.emulator_name}] 采集首英雄未识别到英雄，结束本轮采集")
+            _return_home_or_wild(executor)
+            return "stop"
+
+        march_result = _click_march(executor)
+        if march_result == MARCH_SAME_TARGET:
+            if same_target_retries < same_target_retry_limit:
+                same_target_retries += 1
+                log_util.log.print(
+                    f"[{executor.emulator_name}] 当前资源点已有其他队伍出征，"
+                    f"{retry_interval} 秒后重新寻找({same_target_retries}/{same_target_retry_limit})"
+                )
+                _sleep_while_running(executor, retry_interval)
+                continue
+            log_util.log.print(f"[{executor.emulator_name}] 当前资源点已有其他队伍出征，已达到同目标重搜次数，结束本轮")
+            return False
+        if not march_result:
+            return False
+        return "sent"
+
+    return False
 
 
 def _build_gather_param_defs():
@@ -202,56 +281,36 @@ def auto_gather_resources(executor, params):
         f"只保留蓝色英雄={keep_only_blue_heroes}, 首英雄必需={require_first_hero}"
     )
 
-    if _should_skip_for_active_limit(executor, len(queues), "挖矿", queue_type="gather"):
+    queue_plan = _planned_gather_queues(executor, queues)
+    if not queue_plan:
         return True
 
-    queue = _next_gather_queue(executor, queues)
-    if not queue:
-        return True
-
-    attempt = 1
-    same_target_retries = 0
-    same_target_retry_limit = max_attempts
-    while attempt <= max_attempts:
-        if not _search_gather_resource_once(executor, queue, attempt, max_attempts):
-            if attempt < max_attempts:
-                log_util.log.print(f"[{executor.emulator_name}] 未找到采集资源点，{retry_interval} 秒后重试")
-                _sleep_while_running(executor, retry_interval)
-                attempt += 1
-                continue
-            log_util.log.print(f"[{executor.emulator_name}] 未找到可采集资源点，结束本轮")
-            _return_home_or_wild(executor)
+    completed = 0
+    for queue in queue_plan:
+        log_util.log.print(
+            f"[{executor.emulator_name}] 开始处理采集队列 {queue['queue_index']} "
+            f"({completed + 1}/{len(queue_plan)})"
+        )
+        if not _ensure_wild(executor):
             return False
 
-        if not _open_gather_formation(executor):
-            _return_home_or_wild(executor)
-            if attempt < max_attempts:
-                log_util.log.print(f"[{executor.emulator_name}] 未进入采集编队页，{retry_interval} 秒后重新搜索")
-                _sleep_while_running(executor, retry_interval)
-                attempt += 1
-                continue
-            return False
-
-        if keep_only_blue_heroes:
-            _keep_only_blue_gather_heroes(executor)
-
-        if require_first_hero and not _first_gather_hero_present(executor):
-            log_util.log.print(f"[{executor.emulator_name}] 采集首英雄未识别到英雄，取消本轮出征")
-            _return_home_or_wild(executor)
+        queue_result = _run_gather_queue(
+            executor,
+            queue,
+            max_attempts,
+            retry_interval,
+            keep_only_blue_heroes,
+            require_first_hero,
+        )
+        if queue_result == "stop":
+            log_util.log.print(f"[{executor.emulator_name}] 自动挖矿本轮结束，已完成 {completed}/{len(queue_plan)} 个队列")
             return True
-
-        march_result = _click_march(executor)
-        if march_result == MARCH_SAME_TARGET:
-            if same_target_retries < same_target_retry_limit:
-                same_target_retries += 1
-                log_util.log.print(
-                    f"[{executor.emulator_name}] 当前资源点已有其他队伍出征，"
-                    f"{retry_interval} 秒后重新寻找({same_target_retries}/{same_target_retry_limit})"
-                )
-                _sleep_while_running(executor, retry_interval)
-                continue
-            log_util.log.print(f"[{executor.emulator_name}] 当前资源点已有其他队伍出征，已达到同目标重搜次数，结束本轮")
+        if not queue_result:
             return False
-        return march_result
+        completed += 1
 
-    return False
+        if not executor.run_status:
+            return False
+
+    log_util.log.print(f"[{executor.emulator_name}] 自动挖矿已按计划完成 {completed}/{len(queue_plan)} 个队列")
+    return True

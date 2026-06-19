@@ -1,6 +1,6 @@
 import log_util
 from task_helpers.constants import MARCH_SAME_TARGET
-from task_helpers.formation import _select_next_formation
+from task_helpers.formation import _select_next_formation, _wait_formation_visible
 from task_helpers.march import _click_march
 from task_helpers.march_queue import _should_skip_for_active_marches
 from task_helpers.navigation import (
@@ -125,13 +125,7 @@ def _start_rally_and_open_formation(executor, duration_minutes):
     ):
         _click_base(executor, 226, 523, wait_seconds=1.2)
 
-    _, _, formation_found = _wait_templates(
-        executor,
-        [_asset("march_button.png"), _asset("formation_anchor.png")],
-        timeout=6,
-        threshold=0.74,
-    )
-    if not formation_found:
+    if not _wait_formation_visible(executor, timeout=6):
         path = executor.emulator_executor.save_debug_screenshot("formation_not_found")
         log_util.log.print(f"[{executor.emulator_name}] 未进入编队页面，截图: {path}")
         return False

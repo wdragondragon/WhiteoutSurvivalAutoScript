@@ -1,6 +1,8 @@
 # simulator_manager.py
 import os
 import subprocess
+import locale
+import time
 
 import cv2
 
@@ -23,6 +25,162 @@ class EmulatorManager:
     def __init__(self, adb_path, ldconsole_path):
         self.adb_path = adb_path
         self.ldconsole_path = ldconsole_path
+        self.last_adb_connect_detail = ""
+
+    @staticmethod
+    def expected_adb_tcp_port(index):
+        return 5555 + int(index) * 2
+
+    @classmethod
+    def expected_adb_connect_address(cls, index):
+        return f"127.0.0.1:{cls.expected_adb_tcp_port(index)}"
+
+    @classmethod
+    def expected_adb_device_name(cls, index):
+        return cls.expected_adb_connect_address(index)
+
+    @classmethod
+    def expected_adb_device_names(cls, index):
+        index = int(index)
+        return [
+            cls.expected_adb_connect_address(index),
+            f"emulator-{5554 + index * 2}",
+        ]
+
+    @staticmethod
+    def _decode_output(data):
+        for encoding in (locale.getpreferredencoding(False), "utf-8", "gbk"):
+            try:
+                return data.decode(encoding)
+            except UnicodeDecodeError:
+                continue
+        return data.decode(errors="ignore")
+
+    def _adb_devices(self):
+        running_devices_name = subprocess.run(
+            [self.adb_path, "devices"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            creationflags=subprocess.CREATE_NO_WINDOW
+        )
+        if running_devices_name.returncode != 0:
+            raise Exception("获取正在运行的设备出错")
+
+        devices = {}
+        for line in running_devices_name.stdout.strip().splitlines()[1:]:
+            devices_info = self._decode_output(line).strip()
+            if not devices_info:
+                continue
+            parts = devices_info.split()
+            if len(parts) >= 2:
+                devices[parts[0]] = parts[1]
+        return devices
+
+    def _adb_device_names(self):
+        return [name for name, status in self._adb_devices().items() if status == "device"]
+
+    def disconnect_adb_device(self, index):
+        disconnected = False
+        for candidate in self.expected_adb_device_names(index):
+            disconnected = self._disconnect_adb_target(candidate) or disconnected
+        return disconnected
+
+    def _disconnect_adb_target(self, target):
+        try:
+            subprocess.run(
+                [self.adb_path, "disconnect", target],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+                timeout=5,
+            )
+            return True
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+
+    def _connect_adb_address(self, address):
+        try:
+            result = subprocess.run(
+                [self.adb_path, "connect", address],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+                timeout=5,
+            )
+        except (OSError, subprocess.TimeoutExpired) as e:
+            return f"adb connect {address} 超时或失败: {e}"
+
+        output = (self._decode_output(result.stdout) + self._decode_output(result.stderr)).strip()
+        if not output:
+            output = f"adb connect {address} 返回码 {result.returncode}"
+        return output
+
+    def expected_adb_statuses(self, index):
+        try:
+            devices = self._adb_devices()
+        except Exception as e:
+            return {"error": str(e)}
+
+        return {
+            candidate: devices.get(candidate)
+            for candidate in self.expected_adb_device_names(index)
+        }
+
+    def expected_adb_status_text(self, index):
+        statuses = self.expected_adb_statuses(index)
+        if "error" in statuses:
+            return f"ADB 状态获取失败: {statuses['error']}"
+
+        parts = []
+        for candidate, status in statuses.items():
+            parts.append(f"{candidate}={status or '未连接'}")
+        return ", ".join(parts)
+
+    def connect_adb_device(self, index):
+        self.last_adb_connect_detail = ""
+        candidates = self.expected_adb_device_names(index)
+        try:
+            devices = self._adb_devices()
+        except Exception as e:
+            self.last_adb_connect_detail = f"获取 ADB 设备列表失败: {e}"
+            return None
+
+        for candidate in candidates:
+            if devices.get(candidate) == "device":
+                return candidate
+
+        stale_candidates = [candidate for candidate in candidates if candidate in devices]
+        if stale_candidates:
+            for candidate in stale_candidates:
+                self._disconnect_adb_target(candidate)
+            self.last_adb_connect_detail = f"已清理陈旧 ADB 连接: {', '.join(stale_candidates)}"
+
+        address = self.expected_adb_connect_address(index)
+        connect_outputs = []
+        for attempt in range(2):
+            connect_outputs.append(self._connect_adb_address(address))
+            try:
+                devices = self._adb_devices()
+            except Exception as e:
+                self.last_adb_connect_detail = f"获取 ADB 设备列表失败: {e}"
+                return None
+
+            for candidate in candidates:
+                if devices.get(candidate) == "device":
+                    return candidate
+
+            stale_candidates = [
+                candidate for candidate in candidates
+                if candidate in devices and devices.get(candidate) != "device"
+            ]
+            if stale_candidates:
+                for candidate in stale_candidates:
+                    self._disconnect_adb_target(candidate)
+                if attempt == 0:
+                    time.sleep(0.5)
+
+        status_text = self.expected_adb_status_text(index)
+        self.last_adb_connect_detail = f"{'; '.join(connect_outputs)}；当前 {status_text}"
+        return None
 
     def start_emulator(self, index):
         try:
@@ -44,16 +202,21 @@ class EmulatorManager:
                 stderr=subprocess.PIPE,
                 creationflags=subprocess.CREATE_NO_WINDOW
             )
+            self.disconnect_adb_device(index)
             return result.returncode == 0
         except OSError:
             return False
 
     def get_running_indices(self):
-        result = subprocess.run([self.ldconsole_path, "list2"], capture_output=True, text=True,
-                                creationflags=subprocess.CREATE_NO_WINDOW)
+        result = subprocess.run(
+            [self.ldconsole_path, "list2"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
         if result.returncode != 0:
             return []
-        lines = result.stdout.strip().splitlines()
+        lines = self._decode_output(result.stdout).strip().splitlines()
         indices = []
         for line in lines:
             parts = line.strip().split(",")
@@ -62,26 +225,23 @@ class EmulatorManager:
         return indices
 
     def get_all_emulators(self):
-        result = subprocess.run([self.ldconsole_path, "list2"], capture_output=True, text=True,
-                                creationflags=subprocess.CREATE_NO_WINDOW)
+        result = subprocess.run(
+            [self.ldconsole_path, "list2"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
         if result.returncode != 0:
             raise Exception("获取设备列表出错")
-        devices_info_list = result.stdout.strip().splitlines()
+        devices_info_list = self._decode_output(result.stdout).strip().splitlines()
 
-        running_devices_name = subprocess.run(
-            [self.adb_path, "devices"],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            creationflags=subprocess.CREATE_NO_WINDOW
-        )
-        if running_devices_name.returncode != 0:
-            raise Exception("获取正在运行的设备出错")
-        running_devices_info_arr = [b.decode('utf-8').strip() for b in
-                                    running_devices_name.stdout.strip().splitlines()[1:] if b.decode('utf-8').strip()]
-        running_devices_name_arr = [devices_info.strip().split()[0] for devices_info in running_devices_info_arr]
+        running_devices_name_arr = self._adb_device_names()
+
         emulators = []
-        running_devices_index = 0
         for line in devices_info_list:
             parts = [p.strip() for p in line.strip().split(",") if p.strip()]
+            if len(parts) < 10 or not parts[0].isdigit():
+                continue
             emulator_status = EmulatorStatus()
             emulator_status.index = int(parts[0])
             emulator_status.name = parts[1]
@@ -89,10 +249,13 @@ class EmulatorManager:
             emulator_status.height = int(parts[7])
             emulator_status.width = int(parts[8])
             emulator_status.dpi = int(parts[9])
-            if emulator_status.is_running() and running_devices_index < len(running_devices_name_arr):
-                emulator_status.device_name = running_devices_name_arr[running_devices_index]
-                running_devices_index += 1
+            if emulator_status.is_running():
+                for expected_device in self.expected_adb_device_names(emulator_status.index):
+                    if expected_device in running_devices_name_arr:
+                        emulator_status.device_name = expected_device
+                        break
             emulators.append(emulator_status)
+
         return emulators
 
     def save_screenshot(self, image, index):

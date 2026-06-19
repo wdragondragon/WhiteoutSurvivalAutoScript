@@ -1,5 +1,7 @@
 import time
 
+import cv2
+
 import log_util
 from task_helpers.screen import (
     _asset,
@@ -101,7 +103,70 @@ def _is_game_surface_visible(executor):
         "buttons/relogin.png",
     ]
     _, _, found = _find_templates(executor, game_surface_templates, threshold=0.72)
-    return found
+    return found or _has_startup_modal(executor)
+
+
+def _has_startup_modal(executor):
+    close_templates = [
+        _asset("close_x.png"),
+        _asset("stamina_close_x.png"),
+        "buttons/back.png",
+        "buttons/back2.png",
+        "buttons/back3.png",
+    ]
+    _, _, close_found = _find_templates(executor, close_templates, threshold=0.76)
+    if close_found:
+        return True
+    return _find_green_confirm_button(executor) is not None
+
+
+def _find_green_confirm_button(executor):
+    image = executor.emulator_executor.screenshot()
+    height, width = image.shape[:2]
+    x1, y1, x2, y2 = (
+        int(width * 0.20),
+        int(height * 0.60),
+        int(width * 0.80),
+        int(height * 0.90),
+    )
+    roi = image[y1:y2, x1:x2]
+    if roi.size == 0:
+        return None
+
+    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+    mask = (((hsv[:, :, 0] > 45) & (hsv[:, :, 0] < 85) &
+             (hsv[:, :, 1] > 80) & (hsv[:, :, 2] > 100)).astype("uint8")) * 255
+    num_labels, _, stats, centroids = cv2.connectedComponentsWithStats(mask, 8)
+    candidates = []
+    for index in range(1, num_labels):
+        component_x, component_y, component_width, component_height, area = stats[index]
+        if component_width < int(width * 0.22) or component_height < int(height * 0.035) or area < 1200:
+            continue
+        center_x = x1 + int(centroids[index][0])
+        center_y = y1 + int(centroids[index][1])
+        candidates.append((area, center_x, center_y))
+    if not candidates:
+        return None
+    _, center_x, center_y = max(candidates, key=lambda item: item[0])
+    return center_x, center_y
+
+
+def _dismiss_startup_modal(executor):
+    close_templates = [
+        _asset("close_x.png"),
+        _asset("stamina_close_x.png"),
+    ]
+    if _click_templates(executor, close_templates, threshold=0.76, wait_seconds=1.0):
+        log_util.log.print(f"[{executor.emulator_name}] 已关闭启动弹窗")
+        return True
+
+    confirm_pos = _find_green_confirm_button(executor)
+    if confirm_pos is None:
+        return False
+    log_util.log.print(f"[{executor.emulator_name}] 已确认启动弹窗")
+    executor.emulator_executor.click(*confirm_pos)
+    _sleep_while_running(executor, 1.0)
+    return True
 
 
 def _clear_known_overlays(executor, max_rounds=6):
@@ -124,6 +189,8 @@ def _clear_known_overlays(executor, max_rounds=6):
             continue
         if _is_wild_visible(executor):
             return True
+        if _dismiss_startup_modal(executor):
+            continue
         if _click_templates(executor, ["buttons/relogin.png"], threshold=0.78, wait_seconds=3.0):
             continue
         if _click_templates(executor, close_templates, threshold=0.76, wait_seconds=0.8):
@@ -169,12 +236,14 @@ def _return_home_or_wild(executor):
 def _ensure_game_open(executor):
     emulator = executor.emulator_executor
     if _is_game_surface_visible(executor):
+        _dismiss_startup_modal(executor)
         return True
 
     end_time = time.time() + 70
     launched = False
     while executor.run_status and time.time() < end_time:
         if _is_game_surface_visible(executor):
+            _dismiss_startup_modal(executor)
             return True
 
         x, y, found = emulator.find_img("buttons/button1.png", threshold=0.76, log_missing=False)
