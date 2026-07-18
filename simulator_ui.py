@@ -1,5 +1,7 @@
 # simulator_ui.py
 import os
+import re
+import subprocess
 
 from PyQt5.QtCore import QTimer, Qt, pyqtSignal
 from PyQt5.QtGui import QIcon, QPixmap, QPainter, QColor
@@ -15,6 +17,7 @@ from component.EmulatorCellWidget import EmulatorCellWidget
 from component.EmulatorComboBoxWidget import EmulatorComboBoxWidget
 from config_manager import TaskConfigManager, ADB_PATH, LDCONSOLE_PATH, ConfigManager
 from execution_scheduler import BatchExecutionThread
+from input_synchronizer import InputSynchronizerThread, ReplaySynchronizerThread
 from log_util import Log
 from simulator_manager import EmulatorManager
 
@@ -40,8 +43,12 @@ class EmulatorSelector(QWidget):
         self.resize(800, 400)
         log_util.log = Log(self.log_pyqt_signal)
         self.scheduler_thread: BatchExecutionThread = None
+        self.sync_thread: InputSynchronizerThread = None
+        self.replay_thread: ReplaySynchronizerThread = None
+        self.sync_recorded_actions = []
         self.is_running = False
         self.current_task_status_by_emulator = {}
+        self._last_adb_refresh_warning = ""
         self.config_mgr: ConfigManager = config_mgr
         self.task_config_manager: TaskConfigManager = TaskConfigManager()
 
@@ -95,7 +102,7 @@ class EmulatorSelector(QWidget):
         self.log_text = QTextEdit()
         self.log_text.document().setMaximumBlockCount(1000)
         self.log_text.setReadOnly(True)
-        self.log_pyqt_signal.connect(self.log_text.append)
+        self.log_pyqt_signal.connect(self.append_log_text)
 
         self.table = QTableWidget(0, 3)
         self.table.setHorizontalHeaderLabels(["模拟器", "绑定配置", "当前任务"])
@@ -112,12 +119,14 @@ class EmulatorSelector(QWidget):
 
         self.emulator_path_tab = self._create_emulator_path_tab()
         self.execution_settings_tab = self._create_execution_settings_tab()
+        self.synchronizer_tab = self._create_synchronizer_tab()
 
         self.tab_widget = QTabWidget()
         self.tab_widget.addTab(self.emulator_table_tab, "模拟器列表")
         self.tab_widget.addTab(self.config_tab, "配置")
         self.tab_widget.addTab(self.emulator_path_tab, "模拟器路径")
         self.tab_widget.addTab(self.execution_settings_tab, "执行设置")
+        self.tab_widget.addTab(self.synchronizer_tab, "同步器")
         self.tab_widget.addTab(self.log_text, "日志")
 
         layout = QVBoxLayout()
@@ -142,6 +151,16 @@ class EmulatorSelector(QWidget):
         self.load_config_from_file(self.config_name_combo.currentText())
         self.load_emulator_paths()
         self.load_execution_settings()
+        self.load_synchronizer_settings()
+        self.refresh_sync_master_options()
+
+    def append_log_text(self, msg):
+        self.log_text.append(str(msg))
+        self.log_text.ensureCursorVisible()
+
+    def append_log_direct(self, msg):
+        self.append_log_text(msg)
+        print(msg, flush=True)
 
     def _create_path_picker(self, browse_handler):
         container = QWidget()
@@ -200,6 +219,11 @@ class EmulatorSelector(QWidget):
         self.batch_start_timeout_spin = QSpinBox()
         self.batch_start_timeout_spin.setRange(1, 3600)
 
+        self.batch_launch_interval_spin = QDoubleSpinBox()
+        self.batch_launch_interval_spin.setRange(0.0, 600.0)
+        self.batch_launch_interval_spin.setDecimals(1)
+        self.batch_launch_interval_spin.setSingleStep(1.0)
+
         self.batch_between_delay_spin = QDoubleSpinBox()
         self.batch_between_delay_spin.setRange(0.0, 600.0)
         self.batch_between_delay_spin.setDecimals(1)
@@ -211,6 +235,7 @@ class EmulatorSelector(QWidget):
         layout.addRow("操作间隔/秒", self.serial_interval_spin)
         layout.addRow("被顶号重登等待/秒", self.relogin_interval_spin)
         layout.addRow("批次启动超时/秒", self.batch_start_timeout_spin)
+        layout.addRow("上号间隔/秒", self.batch_launch_interval_spin)
         layout.addRow("批次间隔/秒", self.batch_between_delay_spin)
 
         for widget in (
@@ -223,12 +248,143 @@ class EmulatorSelector(QWidget):
                 self.serial_interval_spin,
                 self.relogin_interval_spin,
                 self.batch_start_timeout_spin,
+                self.batch_launch_interval_spin,
                 self.batch_between_delay_spin,
         ):
             widget.valueChanged.connect(self.save_execution_settings)
 
         tab.setLayout(layout)
         return tab
+
+    def _create_synchronizer_tab(self):
+        tab = QWidget()
+        layout = QFormLayout()
+
+        self.sync_master_combo = QComboBox()
+        self.sync_refresh_button = QPushButton("刷新主模拟器列表")
+        self.sync_refresh_button.clicked.connect(self.refresh_sync_master_options)
+
+        self.sync_delay_min_spin = QDoubleSpinBox()
+        self.sync_delay_min_spin.setRange(0.0, 60.0)
+        self.sync_delay_min_spin.setDecimals(2)
+        self.sync_delay_min_spin.setSingleStep(0.1)
+
+        self.sync_delay_max_spin = QDoubleSpinBox()
+        self.sync_delay_max_spin.setRange(0.0, 60.0)
+        self.sync_delay_max_spin.setDecimals(2)
+        self.sync_delay_max_spin.setSingleStep(0.1)
+
+        self.sync_random_offset_min_spin = QSpinBox()
+        self.sync_random_offset_min_spin.setRange(0, 200)
+
+        self.sync_random_offset_max_spin = QSpinBox()
+        self.sync_random_offset_max_spin.setRange(0, 200)
+
+        self.sync_delayed_replay_checkbox = QCheckBox("延后重放")
+        self.sync_delayed_replay_checkbox.stateChanged.connect(self.on_delayed_replay_changed)
+
+        self.sync_start_button = QPushButton("开始同步")
+        self.sync_start_button.clicked.connect(self.toggle_synchronizer)
+
+        self.sync_replay_button = QPushButton("重放录制")
+        self.sync_replay_button.clicked.connect(self.toggle_replay)
+        self.sync_replay_button.setEnabled(False)
+
+        layout.addRow("主模拟器", self.sync_master_combo)
+        layout.addRow("", self.sync_refresh_button)
+        layout.addRow("最小延迟/秒", self.sync_delay_min_spin)
+        layout.addRow("最大延迟/秒", self.sync_delay_max_spin)
+        layout.addRow("坐标最小偏移/像素", self.sync_random_offset_min_spin)
+        layout.addRow("坐标最大偏移/像素", self.sync_random_offset_max_spin)
+        layout.addRow("", self.sync_delayed_replay_checkbox)
+        layout.addRow("", self.sync_start_button)
+        layout.addRow("", self.sync_replay_button)
+
+        for widget in (
+                self.sync_delay_min_spin,
+                self.sync_delay_max_spin,
+                self.sync_random_offset_min_spin,
+                self.sync_random_offset_max_spin,
+        ):
+            widget.valueChanged.connect(self.save_synchronizer_settings)
+        self.sync_master_combo.currentTextChanged.connect(self.save_synchronizer_settings)
+
+        tab.setLayout(layout)
+        return tab
+
+    def load_synchronizer_settings(self):
+        widgets = [
+            self.sync_master_combo,
+            self.sync_delay_min_spin,
+            self.sync_delay_max_spin,
+            self.sync_random_offset_min_spin,
+            self.sync_random_offset_max_spin,
+            self.sync_delayed_replay_checkbox,
+        ]
+        for widget in widgets:
+            widget.blockSignals(True)
+        try:
+            self.sync_delay_min_spin.setValue(float(self.config_mgr.get("sync_delay_min_sec", 0.0) or 0.0))
+            self.sync_delay_max_spin.setValue(float(self.config_mgr.get("sync_delay_max_sec", 0.0) or 0.0))
+            legacy_offset = int(self.config_mgr.get("sync_random_offset_px", 0) or 0)
+            offset_min = int(self.config_mgr.get("sync_random_offset_min_px", 0) or 0)
+            offset_max = int(self.config_mgr.get("sync_random_offset_max_px", legacy_offset) or 0)
+            self.sync_random_offset_min_spin.setValue(min(offset_min, offset_max))
+            self.sync_random_offset_max_spin.setValue(max(offset_min, offset_max))
+            self.sync_delayed_replay_checkbox.setChecked(bool(self.config_mgr.get("sync_delayed_replay_enabled", False)))
+        finally:
+            for widget in widgets:
+                widget.blockSignals(False)
+        self.update_synchronizer_controls()
+
+    def save_synchronizer_settings(self):
+        if not hasattr(self, "sync_delay_min_spin"):
+            return
+        delay_min = min(self.sync_delay_min_spin.value(), self.sync_delay_max_spin.value())
+        delay_max = max(self.sync_delay_min_spin.value(), self.sync_delay_max_spin.value())
+        offset_min = min(self.sync_random_offset_min_spin.value(), self.sync_random_offset_max_spin.value())
+        offset_max = max(self.sync_random_offset_min_spin.value(), self.sync_random_offset_max_spin.value())
+        self.config_mgr.set("sync_master_name", self.sync_master_combo.currentText().strip())
+        self.config_mgr.set("sync_delay_min_sec", delay_min)
+        self.config_mgr.set("sync_delay_max_sec", delay_max)
+        self.config_mgr.set("sync_random_offset_min_px", offset_min)
+        self.config_mgr.set("sync_random_offset_max_px", offset_max)
+        self.config_mgr.set("sync_random_offset_px", offset_max)
+        self.config_mgr.set("sync_delayed_replay_enabled", self.sync_delayed_replay_checkbox.isChecked())
+        self.config_mgr.save()
+
+    def on_delayed_replay_changed(self, _state=None):
+        self.save_synchronizer_settings()
+        self.update_synchronizer_controls()
+
+    def update_synchronizer_controls(self):
+        if not hasattr(self, "sync_start_button"):
+            return
+        delayed = self.sync_delayed_replay_checkbox.isChecked()
+        if self.sync_thread:
+            self.sync_start_button.setText("停止录制" if delayed else "停止同步")
+        else:
+            self.sync_start_button.setText("开始录制" if delayed else "开始同步")
+        if self.replay_thread:
+            self.sync_replay_button.setText("停止重放")
+            self.sync_replay_button.setEnabled(True)
+        else:
+            self.sync_replay_button.setText("重放录制")
+            self.sync_replay_button.setEnabled(delayed and bool(self.sync_recorded_actions) and not self.sync_thread)
+
+    def refresh_sync_master_options(self):
+        if not hasattr(self, "sync_master_combo"):
+            return
+        selected_names = self.get_selected_emulator_names_in_table_order()
+        current = self.sync_master_combo.currentText().strip() or self.config_mgr.get("sync_master_name", "")
+        self.sync_master_combo.blockSignals(True)
+        try:
+            self.sync_master_combo.clear()
+            self.sync_master_combo.addItems(selected_names)
+            if current in selected_names:
+                self.sync_master_combo.setCurrentText(current)
+        finally:
+            self.sync_master_combo.blockSignals(False)
 
     def load_emulator_paths(self):
         widgets = [self.ldconsole_path_edit, self.adb_path_edit]
@@ -321,6 +477,7 @@ class EmulatorSelector(QWidget):
             self.serial_interval_spin,
             self.relogin_interval_spin,
             self.batch_start_timeout_spin,
+            self.batch_launch_interval_spin,
             self.batch_between_delay_spin,
         ]
         for widget in widgets:
@@ -332,6 +489,7 @@ class EmulatorSelector(QWidget):
             self.serial_interval_spin.setValue(settings["serial_action_interval_sec"])
             self.relogin_interval_spin.setValue(settings["relogin_interval_sec"])
             self.batch_start_timeout_spin.setValue(settings["batch_start_timeout_sec"])
+            self.batch_launch_interval_spin.setValue(settings["batch_launch_interval_sec"])
             self.batch_between_delay_spin.setValue(settings["batch_between_delay_sec"])
         finally:
             for widget in widgets:
@@ -346,6 +504,7 @@ class EmulatorSelector(QWidget):
             "serial_action_interval_sec": self.serial_interval_spin.value(),
             "relogin_interval_sec": self.relogin_interval_spin.value(),
             "batch_start_timeout_sec": self.batch_start_timeout_spin.value(),
+            "batch_launch_interval_sec": self.batch_launch_interval_spin.value(),
             "batch_between_delay_sec": self.batch_between_delay_spin.value(),
         }
 
@@ -423,6 +582,14 @@ class EmulatorSelector(QWidget):
             self.status_label.setText(message)
             log_util.log.print(message)
             return
+        adb_detail = getattr(self.manager, "last_adb_connect_detail", "")
+        if adb_detail.startswith("获取 ADB 设备列表失败"):
+            self.status_label.setText("模拟器列表已刷新，但 ADB 设备状态获取失败；运行状态可能不完整")
+            if adb_detail != self._last_adb_refresh_warning:
+                log_util.log.print(adb_detail)
+                self._last_adb_refresh_warning = adb_detail
+        else:
+            self._last_adb_refresh_warning = ""
         selected_names = self.selected_emulators.copy()
         emulator_names = [emu.name for emu in emulators]
         current_names = self._current_emulator_row_names()
@@ -444,6 +611,7 @@ class EmulatorSelector(QWidget):
             self.table.setUpdatesEnabled(True)
             self._restore_table_scroll(vertical_value, horizontal_value)
             QTimer.singleShot(0, lambda: self._restore_table_scroll(vertical_value, horizontal_value))
+            self.refresh_sync_master_options()
 
     def update_selected_emulators(self):
         self.selected_emulators.clear()
@@ -460,6 +628,7 @@ class EmulatorSelector(QWidget):
         else:
             self.selected_emulators.discard(name)
         log_util.log.print(f"当前选中: {','.join(self.selected_emulators)}")
+        self.refresh_sync_master_options()
 
     def on_bind_config_combo_changed(self, emu_name: str, config_name: str):
         log_util.log.print(f"配置绑定[{emu_name}]->[{config_name}]")
@@ -494,6 +663,7 @@ class EmulatorSelector(QWidget):
             self.selected_emulators = self.get_selected_emulator_names()
         else:
             self.selected_emulators.clear()
+        self.refresh_sync_master_options()
 
     def get_selected_emulator_names(self) -> set:
         selected_names = set()
@@ -563,7 +733,239 @@ class EmulatorSelector(QWidget):
         QTimer.singleShot(1000, self.refresh_emulators)
         QTimer.singleShot(3000, self.refresh_emulators)
 
+    def toggle_synchronizer(self):
+        if self.sync_thread:
+            self.stop_synchronizer()
+        else:
+            self.start_synchronizer()
+
+    def start_synchronizer(self):
+        if self.is_running:
+            self.status_label.setText("正在执行任务，请先停止任务再启动同步器")
+            return
+        if self.replay_thread:
+            self.status_label.setText("正在重放录制，请先停止重放")
+            return
+
+        selected_names = self.get_selected_emulator_names_in_table_order()
+        if len(selected_names) < 2:
+            self.status_label.setText("同步器至少需要勾选 2 个运行中的模拟器")
+            return
+
+        self.refresh_sync_master_options()
+        master_name = self.sync_master_combo.currentText().strip()
+        if not master_name or master_name not in selected_names:
+            self.status_label.setText("请选择一个已勾选的主模拟器")
+            return
+
+        try:
+            emulators = {emu.name: emu for emu in self.manager.get_all_emulators()}
+        except Exception as e:
+            self.status_label.setText(f"启动同步器失败，无法刷新模拟器列表: {e}")
+            return
+
+        targets = {}
+        for name in selected_names:
+            emulator = emulators.get(name)
+            target = self._build_sync_target(emulator)
+            if not target:
+                self.status_label.setText(f"启动同步器失败，{name} 未运行或 ADB 未就绪")
+                return
+            targets[name] = target
+
+        master = targets[master_name]
+        followers = [target for name, target in targets.items() if name != master_name]
+        if not followers:
+            self.status_label.setText("同步器没有从模拟器")
+            return
+
+        delay_min = min(self.sync_delay_min_spin.value(), self.sync_delay_max_spin.value())
+        delay_max = max(self.sync_delay_min_spin.value(), self.sync_delay_max_spin.value())
+        offset_min = min(self.sync_random_offset_min_spin.value(), self.sync_random_offset_max_spin.value())
+        offset_max = max(self.sync_random_offset_min_spin.value(), self.sync_random_offset_max_spin.value())
+        execution_settings = self.config_mgr.get_execution_settings()
+        serial_interval = (
+            execution_settings["serial_action_interval_sec"]
+            if execution_settings["serial_actions_enabled"]
+            else 0.0
+        )
+        record_only = self.sync_delayed_replay_checkbox.isChecked()
+        if record_only:
+            self.sync_recorded_actions = []
+        self.sync_thread = InputSynchronizerThread(
+            adb_path=self.config_mgr.get("adb_path", ADB_PATH),
+            master=master,
+            followers=followers,
+            delay_min_sec=delay_min,
+            delay_max_sec=delay_max,
+            random_offset_min_px=offset_min,
+            random_offset_max_px=offset_max,
+            record_only=record_only,
+            serial_interval_sec=serial_interval,
+        )
+        self.sync_thread.log_signal.connect(self.append_log_direct)
+        self.sync_thread.finished_signal.connect(self.synchronizer_finished)
+        self.sync_thread.start()
+
+        self.save_synchronizer_settings()
+        self.update_synchronizer_controls()
+        mode_text = "录制中" if record_only else "运行中"
+        self.status_label.setText(f"同步器{mode_text}：主模拟器 {master_name}，从模拟器 {len(followers)} 个")
+        log_util.log.print(f"同步器已启动: 模式={mode_text}, 主模拟器={master_name}, 从模拟器={len(followers)}")
+
+    def _build_sync_target(self, emulator):
+        if not emulator or not emulator.is_running():
+            return None
+        device_name = emulator.device_name
+        if not device_name:
+            device_name = self.manager.connect_adb_device(emulator.index)
+        if not device_name:
+            log_util.log.print(f"[同步器] {getattr(emulator, 'name', '')} ADB 未就绪: {self.manager.last_adb_connect_detail}")
+            return None
+
+        width, height = self._read_sync_screen_size(device_name, emulator.width, emulator.height)
+        return {
+            "name": emulator.name,
+            "device_name": device_name,
+            "width": width,
+            "height": height,
+        }
+
+    def _read_sync_screen_size(self, device_name, fallback_width, fallback_height):
+        try:
+            result = subprocess.run(
+                [self.config_mgr.get("adb_path", ADB_PATH), "-s", device_name, "shell", "wm", "size"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+                timeout=5,
+            )
+            output = (result.stdout + result.stderr).decode(errors="ignore")
+            match = re.search(r"(\d+)\s*x\s*(\d+)", output)
+            if match:
+                return int(match.group(1)), int(match.group(2))
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+
+        width = int(fallback_width or 0)
+        height = int(fallback_height or 0)
+        if width > 0 and height > 0:
+            return width, height
+        return 450, 800
+
+    def stop_synchronizer(self):
+        self.status_label.setText("正在停止同步器...")
+        if self.sync_thread:
+            self.sync_thread.stop()
+
+    def toggle_replay(self):
+        if self.replay_thread:
+            self.stop_replay()
+        else:
+            self.start_replay()
+
+    def start_replay(self):
+        if self.is_running:
+            self.status_label.setText("正在执行任务，请先停止任务再重放录制")
+            return
+        if self.sync_thread:
+            self.status_label.setText("正在录制或同步，请先停止后再重放")
+            return
+        if not self.sync_recorded_actions:
+            self.status_label.setText("没有可重放的录制动作")
+            return
+
+        selected_names = self.get_selected_emulator_names_in_table_order()
+        if len(selected_names) < 2:
+            self.status_label.setText("重放至少需要勾选 2 个运行中的模拟器")
+            return
+        self.refresh_sync_master_options()
+        master_name = self.sync_master_combo.currentText().strip()
+        if not master_name or master_name not in selected_names:
+            self.status_label.setText("请选择一个已勾选的主模拟器")
+            return
+
+        try:
+            emulators = {emu.name: emu for emu in self.manager.get_all_emulators()}
+        except Exception as e:
+            self.status_label.setText(f"启动重放失败，无法刷新模拟器列表: {e}")
+            return
+
+        followers = []
+        for name in selected_names:
+            if name == master_name:
+                continue
+            target = self._build_sync_target(emulators.get(name))
+            if not target:
+                self.status_label.setText(f"启动重放失败，{name} 未运行或 ADB 未就绪")
+                return
+            followers.append(target)
+        if not followers:
+            self.status_label.setText("重放没有从模拟器")
+            return
+
+        delay_min = min(self.sync_delay_min_spin.value(), self.sync_delay_max_spin.value())
+        delay_max = max(self.sync_delay_min_spin.value(), self.sync_delay_max_spin.value())
+        offset_min = min(self.sync_random_offset_min_spin.value(), self.sync_random_offset_max_spin.value())
+        offset_max = max(self.sync_random_offset_min_spin.value(), self.sync_random_offset_max_spin.value())
+        execution_settings = self.config_mgr.get_execution_settings()
+        serial_interval = (
+            execution_settings["serial_action_interval_sec"]
+            if execution_settings["serial_actions_enabled"]
+            else 0.0
+        )
+
+        self.replay_thread = ReplaySynchronizerThread(
+            adb_path=self.config_mgr.get("adb_path", ADB_PATH),
+            followers=followers,
+            recorded_actions=self.sync_recorded_actions,
+            delay_min_sec=delay_min,
+            delay_max_sec=delay_max,
+            serial_interval_sec=serial_interval,
+            random_offset_min_px=offset_min,
+            random_offset_max_px=offset_max,
+        )
+        self.replay_thread.log_signal.connect(self.append_log_direct)
+        self.replay_thread.finished_signal.connect(self.replay_finished)
+        self.replay_thread.start()
+
+        self.save_synchronizer_settings()
+        self.update_synchronizer_controls()
+        self.status_label.setText(f"正在重放录制：动作 {len(self.sync_recorded_actions)} 个，从模拟器 {len(followers)} 个")
+        log_util.log.print(f"同步器开始重放录制: 动作={len(self.sync_recorded_actions)}, 从模拟器={len(followers)}")
+
+    def stop_replay(self):
+        self.status_label.setText("正在停止重放...")
+        if self.replay_thread:
+            self.replay_thread.stop()
+
+    def replay_finished(self):
+        log_util.log.print("同步器录制重放已结束")
+        self.replay_thread = None
+        self.update_synchronizer_controls()
+        self.status_label.setText("录制重放已结束")
+
+    def synchronizer_finished(self):
+        was_recording = bool(self.sync_thread and getattr(self.sync_thread, "record_only", False))
+        if was_recording:
+            self.sync_recorded_actions = self.sync_thread.get_recorded_actions()
+            log_util.log.print(f"同步器录制已停止，共录制 {len(self.sync_recorded_actions)} 个动作")
+        else:
+            log_util.log.print("同步器已停止")
+        self.sync_thread = None
+        self.update_synchronizer_controls()
+        if was_recording:
+            self.status_label.setText(f"录制已停止，共 {len(self.sync_recorded_actions)} 个动作")
+        else:
+            self.status_label.setText("同步器已停止")
+
     def toggle_execution(self):
+        if self.sync_thread:
+            self.status_label.setText("同步器运行中，请先停止同步器再执行任务")
+            return
+        if self.replay_thread:
+            self.status_label.setText("同步器正在重放录制，请先停止重放再执行任务")
+            return
         if not self.is_running:
             if not self.selected_emulators:
                 self.status_label.setText("⚠️ 请先选择要执行的模拟器")

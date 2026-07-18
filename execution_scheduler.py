@@ -34,6 +34,7 @@ class BatchExecutionThread(QThread):
         self._is_running = True
         self._active_executors = {}
         self._active_batch_names = set()
+        self._last_batch_launch_at = 0.0
         self._lock = threading.Lock()
         self.manager = EmulatorManager(adb_path, ldconsole_path)
         self.action_gate = SerialActionGate(
@@ -128,7 +129,10 @@ class BatchExecutionThread(QThread):
             return None
 
         self._cleanup_stale_adb_before_launch(name, emulator)
+        if not self._wait_before_batch_launch(name):
+            return None
         if self.manager.start_emulator(emulator.index):
+            self._mark_batch_launch_sent()
             self.log_signal.emit(f"[分批启动] 已发送启动命令: {name}")
         else:
             self.log_signal.emit(f"[分批启动] 启动失败: {name}")
@@ -212,7 +216,10 @@ class BatchExecutionThread(QThread):
             self.log_signal.emit(f"[分批启动] {name} 重启前关闭失败，继续等待")
             return
         self._wait_emulator_offline(name, timeout=25)
+        if not self._wait_before_batch_launch(name):
+            return
         if self.manager.start_emulator(emulator.index):
+            self._mark_batch_launch_sent()
             self.log_signal.emit(f"[分批启动] {name} 已重新发送启动命令")
             state["started_at"] = time.time()
             state["deadline"] = time.time() + timeout
@@ -221,6 +228,28 @@ class BatchExecutionThread(QThread):
             state["last_log_at"] = 0.0
         else:
             self.log_signal.emit(f"[分批启动] {name} 重新启动失败，继续等待超时")
+
+    def _wait_before_batch_launch(self, name):
+        interval = float(self.execution_settings.get("batch_launch_interval_sec", 0.0) or 0.0)
+        if interval <= 0:
+            return self._is_running
+
+        with self._lock:
+            last_launch_at = self._last_batch_launch_at
+        if last_launch_at <= 0:
+            return self._is_running
+
+        remaining = interval - (time.time() - last_launch_at)
+        if remaining <= 0:
+            return self._is_running
+
+        self.log_signal.emit(f"[分批启动] 上号间隔等待 {remaining:g} 秒后启动 {name}")
+        self._sleep_interruptible(remaining)
+        return self._is_running
+
+    def _mark_batch_launch_sent(self):
+        with self._lock:
+            self._last_batch_launch_at = time.time()
 
     def _start_once_worker(self, emulator, workers):
         worker = threading.Thread(target=self._run_once_worker, args=(emulator,), daemon=True)

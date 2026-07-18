@@ -6,6 +6,7 @@ DEFAULT_EXECUTION_SETTINGS = {
     "serial_action_interval_sec": 1.0,
     "relogin_interval_sec": 0.0,
     "batch_start_timeout_sec": 180,
+    "batch_launch_interval_sec": 0.0,
     "batch_between_delay_sec": 3.0,
     "session_retry_limit": 3,
 }
@@ -64,6 +65,9 @@ def normalize_execution_settings(raw_settings=None):
     )
     settings["relogin_interval_sec"] = _float_value(settings.get("relogin_interval_sec"), 0.0, minimum=0.0)
     settings["batch_start_timeout_sec"] = _int_value(settings.get("batch_start_timeout_sec"), 180, minimum=1)
+    settings["batch_launch_interval_sec"] = _float_value(
+        settings.get("batch_launch_interval_sec"), 0.0, minimum=0.0
+    )
     settings["batch_between_delay_sec"] = _float_value(settings.get("batch_between_delay_sec"), 3.0, minimum=0.0)
     settings["session_retry_limit"] = _int_value(settings.get("session_retry_limit"), 3, minimum=0)
     return settings

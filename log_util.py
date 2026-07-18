@@ -8,7 +8,7 @@ class Log:
     def print(self, msg: str):
         if self.log_pyqt_signal:
             self.log_pyqt_signal.emit(msg)
-        print(msg)
+        print(msg, flush=True)
 
 
 log = Log()

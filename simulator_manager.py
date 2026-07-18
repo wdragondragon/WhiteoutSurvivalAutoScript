@@ -57,13 +57,39 @@ class EmulatorManager:
         return data.decode(errors="ignore")
 
     def _adb_devices(self):
-        running_devices_name = subprocess.run(
-            [self.adb_path, "devices"],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            creationflags=subprocess.CREATE_NO_WINDOW
-        )
+        errors = []
+        for attempt in range(2):
+            try:
+                devices = self._adb_devices_once()
+                self.last_adb_connect_detail = ""
+                return devices
+            except Exception as e:
+                errors.append(str(e))
+                if attempt == 0:
+                    errors.append(self._restart_adb_server())
+                    time.sleep(0.5)
+        raise Exception("获取正在运行的设备出错: " + "；".join(error for error in errors if error))
+
+    def _adb_devices_once(self):
+        try:
+            running_devices_name = subprocess.run(
+                [self.adb_path, "devices"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+                timeout=8,
+            )
+        except (OSError, subprocess.TimeoutExpired) as e:
+            raise Exception(f"执行 adb devices 失败: {e}")
+
         if running_devices_name.returncode != 0:
-            raise Exception("获取正在运行的设备出错")
+            output = (
+                self._decode_output(running_devices_name.stdout) +
+                self._decode_output(running_devices_name.stderr)
+            ).strip()
+            if not output:
+                output = "无输出"
+            raise Exception(f"adb devices 返回码 {running_devices_name.returncode}: {output}")
 
         devices = {}
         for line in running_devices_name.stdout.strip().splitlines()[1:]:
@@ -74,6 +100,25 @@ class EmulatorManager:
             if len(parts) >= 2:
                 devices[parts[0]] = parts[1]
         return devices
+
+    def _restart_adb_server(self):
+        messages = []
+        for command in ("kill-server", "start-server"):
+            try:
+                result = subprocess.run(
+                    [self.adb_path, command],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                    timeout=8,
+                )
+                output = (self._decode_output(result.stdout) + self._decode_output(result.stderr)).strip()
+                if not output:
+                    output = f"返回码 {result.returncode}"
+                messages.append(f"adb {command}: {output}")
+            except (OSError, subprocess.TimeoutExpired) as e:
+                messages.append(f"adb {command} 失败: {e}")
+        return "已尝试重启 ADB server（" + "；".join(messages) + "）"
 
     def _adb_device_names(self):
         return [name for name, status in self._adb_devices().items() if status == "device"]
@@ -235,7 +280,11 @@ class EmulatorManager:
             raise Exception("获取设备列表出错")
         devices_info_list = self._decode_output(result.stdout).strip().splitlines()
 
-        running_devices_name_arr = self._adb_device_names()
+        try:
+            running_devices_name_arr = self._adb_device_names()
+        except Exception as e:
+            self.last_adb_connect_detail = f"获取 ADB 设备列表失败，已降级刷新模拟器列表: {e}"
+            running_devices_name_arr = []
 
         emulators = []
         for line in devices_info_list:
@@ -249,11 +298,12 @@ class EmulatorManager:
             emulator_status.height = int(parts[7])
             emulator_status.width = int(parts[8])
             emulator_status.dpi = int(parts[9])
-            if emulator_status.is_running():
-                for expected_device in self.expected_adb_device_names(emulator_status.index):
-                    if expected_device in running_devices_name_arr:
-                        emulator_status.device_name = expected_device
-                        break
+            for expected_device in self.expected_adb_device_names(emulator_status.index):
+                if expected_device in running_devices_name_arr:
+                    emulator_status.device_name = expected_device
+                    if not emulator_status.is_running():
+                        emulator_status.run_status = 1
+                    break
             emulators.append(emulator_status)
 
         return emulators
